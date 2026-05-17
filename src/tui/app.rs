@@ -28,7 +28,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
-use super::components::{chat_view, mode_bar, stats_bar};
+use super::components::cost_panel::CostData;
+use super::components::community_panel::{self, CommunityTab};
+use super::components::project_panel::{self, ProjectStats};
+use super::components::{chat_view, cost_panel, mode_bar, stats_bar};
 use super::keybindings::{self, KeyEvent};
 
 // ---- 模式定义 ----
@@ -116,6 +119,12 @@ pub struct App {
     pending_results: Arc<Mutex<Vec<MergedResult>>>,
     /// Tokio 运行时句柄
     runtime_handle: tokio::runtime::Handle,
+    /// 项目统计
+    project_stats: ProjectStats,
+    /// 费用数据
+    cost_data: CostData,
+    /// 社区大厅当前标签
+    community_tab: CommunityTab,
 }
 
 impl App {
@@ -171,6 +180,12 @@ impl App {
             orchestrator,
             pending_results: Arc::new(Mutex::new(Vec::new())),
             runtime_handle,
+            project_stats: ProjectStats::default(),
+            cost_data: CostData {
+                monthly_budget: 100.0,
+                ..Default::default()
+            },
+            community_tab: CommunityTab::Pool,
         })
     }
 
@@ -229,11 +244,19 @@ impl App {
                                 self.show_project_panel = !self.show_project_panel;
                                 self.show_cost_panel = false;
                                 self.show_community_panel = false;
+                                if self.show_project_panel {
+                                    self.project_stats = project_panel::gather_stats(
+                                        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                                    );
+                                }
                             }
                             KeyEvent::CostPanel => {
                                 self.show_cost_panel = !self.show_cost_panel;
                                 self.show_project_panel = false;
                                 self.show_community_panel = false;
+                                if self.show_cost_panel {
+                                    self.update_cost_data();
+                                }
                             }
                             KeyEvent::CommunityPanel => {
                                 self.show_community_panel = !self.show_community_panel;
@@ -260,6 +283,20 @@ impl App {
                             }
                             KeyEvent::ScrollDown => {
                                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                            }
+                            KeyEvent::TabLeft => {
+                                if self.show_community_panel {
+                                    let tabs = CommunityTab::all();
+                                    let idx = tabs.iter().position(|t| *t == self.community_tab).unwrap_or(0);
+                                    self.community_tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
+                                }
+                            }
+                            KeyEvent::TabRight => {
+                                if self.show_community_panel {
+                                    let tabs = CommunityTab::all();
+                                    let idx = tabs.iter().position(|t| *t == self.community_tab).unwrap_or(0);
+                                    self.community_tab = tabs[(idx + 1) % tabs.len()];
+                                }
                             }
                         }
                     }
@@ -382,51 +419,17 @@ impl App {
     }
 
     fn draw_project_panel(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default().title(" F1 项目监控 ").borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-        let info = vec![
-            Line::from("📁 项目监控面板"), Line::from(""),
-            Line::from("此面板将在阶段 4 完善，显示："),
-            Line::from("  • 文件数与代码行数"),
-            Line::from("  • 最近提交记录"),
-            Line::from("  • 测试状态"), Line::from("  • 性能基线"),
-        ];
-        f.render_widget(Paragraph::new(info).block(block), area);
+        project_panel::render(f, area, &self.project_stats);
     }
 
     fn draw_cost_panel(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default().title(" F2 费用看板 ").borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
-        let stats = self.context_manager.cache_stats();
-        let level_rates = self.context_manager.level_hit_rates();
-
-        let info = vec![
-            Line::from("💰 费用看板"), Line::from(""),
-            Line::from(format!("  累计费用: {}", crate::utils::format_cost(self.total_cost))),
-            Line::from(format!("  总请求: {} | 命中: {} | 未命中: {}",
-                stats.total_requests(), stats.hits, stats.misses)),
-            Line::from(format!("  缓存命中率: {:.1}%", stats.hit_rate() * 100.0)),
-            Line::from(format!("  节省 Token: {}", stats.tokens_saved)), Line::from(""),
-            Line::from("  四级缓存命中率:"),
-            Line::from(format!("    L1 系统提示词: {:.1}%", level_rates[0] * 100.0)),
-            Line::from(format!("    L2 项目上下文: {:.1}%", level_rates[1] * 100.0)),
-            Line::from(format!("    L3 会话缓存:   {:.1}%", level_rates[2] * 100.0)),
-            Line::from(format!("    L4 挥发性:     {:.1}%", level_rates[3] * 100.0)),
-            Line::from(""), Line::from("此面板将在阶段 4 完善"),
-        ];
-        f.render_widget(Paragraph::new(info).block(block), area);
+        cost_panel::render(f, area, &self.cost_data, self.cache_hit_rate);
     }
 
     fn draw_community_panel(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default().title(" 社区大厅 ").borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Magenta));
-        let info = vec![
-            Line::from("🌐 社区大厅"), Line::from(""),
-            Line::from("此面板将在阶段 4 完善，包含："),
-            Line::from("  • 经验熔池"), Line::from("  • 天工阁 (SOP)"),
-            Line::from("  • 悬赏榜"), Line::from("  • 锻师会动态"),
-        ];
-        f.render_widget(Paragraph::new(info).block(block), area);
+        community_panel::render(f, area, self.community_tab, |_tab| {
+            // Tab switching handled via key events
+        });
     }
 
     fn draw_share_dialog(&self, f: &mut Frame, area: Rect) {
@@ -516,6 +519,26 @@ impl App {
             self.mode = mode;
             self.messages.push(Message::system(format!("已切换到「{}」模式 — {}", mode.name(), mode.desc())));
         }
+    }
+
+    /// 更新费用数据
+    fn update_cost_data(&mut self) {
+        let stats = self.context_manager.cache_stats();
+        // Claude Code 估算：每 1M token 约 $3，折合 ¥21
+        let claude_estimate = stats.total_requests() as f64 * 0.003;
+        let cache_saved = stats.tokens_saved as f64 * 0.000001;
+
+        self.cost_data = CostData {
+            prompt_tokens: stats.tokens_saved + stats.hits * 100,
+            completion_tokens: stats.total_requests() * 200,
+            total_tokens: stats.total_requests() * 300 + stats.tokens_saved,
+            cache_hit_tokens: stats.tokens_saved,
+            total_cost_yuan: self.total_cost,
+            cache_saved_yuan: cache_saved,
+            claude_estimated_yuan: claude_estimate,
+            monthly_budget: self.cost_data.monthly_budget,
+            monthly_used: self.total_cost,
+        };
     }
 
     fn estimate_memory(&self) -> u64 {

@@ -30,6 +30,8 @@ pub enum KeyEvent {
     /// 上/下 滚动
     ScrollUp,
     ScrollDown,
+    TabLeft,
+    TabRight,
 }
 
 /// 将 crossterm 按键转换为熔炉按键事件
@@ -119,6 +121,18 @@ pub fn map_key(key: crossterm::event::KeyEvent) -> Option<KeyEvent> {
             modifiers: KeyModifiers::NONE,
             ..
         } => Some(KeyEvent::ScrollDown),
+        // 左箭头
+        crossterm::event::KeyEvent {
+            code: KeyCode::Left,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => Some(KeyEvent::TabLeft),
+        // 右箭头
+        crossterm::event::KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => Some(KeyEvent::TabRight),
         _ => None,
     }
 }

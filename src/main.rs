@@ -53,8 +53,7 @@ fn setup_logging(log_level: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     setup_logging(&cli.log_level)?;
 
@@ -66,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("缓存命中率目标: ≥97%");
 
     let mut app = tui::App::new(cfg)?;
-    app.run().await?;
+    app.run()?;
 
     Ok(())
 }

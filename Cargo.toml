@@ -1,0 +1,56 @@
+[package]
+name = "forge-shell"
+version = "0.1.0"
+edition = "2024"
+description = "熔炉 (ForgeShell) — 以意为炉，以语为锤，铸代码之剑"
+license = "MIT"
+authors = ["ForgeShell Contributors"]
+repository = ""
+
+[dependencies]
+# TUI 框架
+ratatui = "0.29"
+crossterm = "0.28"
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# HTTP 客户端
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# 参数解析
+clap = { version = "4", features = ["derive"] }
+
+# 差异对比
+similar = "2"
+
+# 配置
+toml = "0.8"
+dirs = "6"
+
+# 工具
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+parking_lot = "0.12"
+dashmap = "6"
+
+# 错误处理
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+evolution = []

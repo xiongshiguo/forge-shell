@@ -53,7 +53,8 @@ fn setup_logging(log_level: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     setup_logging(&cli.log_level)?;
 

@@ -2,6 +2,7 @@ mod config;
 mod error;
 mod locale;
 mod utils;
+mod platform;
 mod agent;
 mod engine;
 mod tui;

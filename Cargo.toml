@@ -54,3 +54,27 @@ tempfile = "3"
 [features]
 default = []
 evolution = []
+
+# 性能优化配置
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
+
+# 静态编译（musl）
+[profile.release-musl]
+inherits = "release"
+# 在 RUSTFLAGS 中设置: -C target-feature=+crt-static
+
+# Windows 优化
+[profile.release-windows]
+inherits = "release"
+# 使用 MSVC 静态链接
+
+# 鸿蒙 Linux 静态编译
+[profile.release-ohos]
+inherits = "release"
+

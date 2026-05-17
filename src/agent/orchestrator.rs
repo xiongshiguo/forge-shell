@@ -157,12 +157,10 @@ impl Orchestrator {
                 let space_left = current_group.len() < self.max_parallel;
 
                 if deps_met && space_left {
-                    // 优先读任务
                     if task.read_only || current_group.is_empty() {
                         current_group.push(task.id.clone());
-                        completed.insert(task.id.clone());
+                        // 注意：此处不立即标记为 completed，而是等整组完成后
                     } else {
-                        // 写任务只有在没有其他读任务可放入时才放入
                         next_round.push_back(task);
                     }
                 } else if deps_met {
@@ -170,6 +168,11 @@ impl Orchestrator {
                 } else {
                     next_round.push_back(task);
                 }
+            }
+
+            // 整组执行完成后才标记为 completed
+            for id in &current_group {
+                completed.insert(id.clone());
             }
 
             if current_group.is_empty() && !next_round.is_empty() {

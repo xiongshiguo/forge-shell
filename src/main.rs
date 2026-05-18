@@ -6,6 +6,7 @@ mod platform;
 mod agent;
 mod engine;
 mod tui;
+mod web;
 #[cfg(feature = "evolution")]
 mod evolution;
 
@@ -23,6 +24,10 @@ struct Cli {
     /// 日志级别 (trace/debug/info/warn/error)
     #[arg(short, long, default_value = "info")]
     log_level: String,
+
+    /// 启动 Web UI 模式（默认启动 TUI）
+    #[arg(long, default_value_t = false)]
+    web: bool,
 }
 
 fn setup_logging(log_level: &str) -> anyhow::Result<()> {
@@ -66,8 +71,13 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("AI 后端: {}", cfg.ai.default_model);
     tracing::info!("缓存命中率目标: ≥97%");
 
-    let mut app = tui::App::new(cfg)?;
-    app.run()?;
+    if cli.web {
+        tracing::info!("🌐 启动 Web UI 模式");
+        web::run_web(cfg).await?;
+    } else {
+        let mut app = tui::App::new(cfg)?;
+        app.run()?;
+    }
 
     Ok(())
 }

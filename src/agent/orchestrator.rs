@@ -89,7 +89,7 @@ impl Orchestrator {
     }
 
     /// 重构类任务：先分析再修改
-    fn decompose_refactor(&self, intent: &str) -> Vec<SubTask> {
+    fn decompose_refactor(&self, _intent: &str) -> Vec<SubTask> {
         vec![
             SubTask { id: "r1".into(), description: "分析现有代码结构".into(),
                 depends_on: vec![], read_only: true, estimated_tokens: 400, priority: 0 },
@@ -105,7 +105,7 @@ impl Orchestrator {
     }
 
     /// 测试类任务
-    fn decompose_test(&self, intent: &str) -> Vec<SubTask> {
+    fn decompose_test(&self, _intent: &str) -> Vec<SubTask> {
         vec![
             SubTask { id: "t1".into(), description: "分析被测代码".into(),
                 depends_on: vec![], read_only: true, estimated_tokens: 300, priority: 0 },
@@ -117,7 +117,7 @@ impl Orchestrator {
     }
 
     /// 分析类任务：只读，高度并行
-    fn decompose_analyze(&self, intent: &str) -> Vec<SubTask> {
+    fn decompose_analyze(&self, _intent: &str) -> Vec<SubTask> {
         vec![
             SubTask { id: "a1".into(), description: "代码结构分析".into(),
                 depends_on: vec![], read_only: true, estimated_tokens: 400, priority: 0 },

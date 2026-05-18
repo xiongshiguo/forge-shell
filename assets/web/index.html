@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>熔炉 ForgeShell</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <span class="logo">🔥 熔炉</span>
+    <span id="topbar-cost">💰 ¥0.0000 | 94%</span>
+  </header>
+  <main id="main">
+    <aside id="sidebar">
+      <div id="conversation-list"></div>
+    </aside>
+    <section id="chat">
+      <div id="messages"></div>
+      <div id="streaming"></div>
+    </section>
+    <aside id="panels">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-panel="project">📊 项目</button>
+        <button class="panel-tab" data-panel="cost">💰 费用</button>
+      </div>
+      <div id="panel-project" class="panel-content active"></div>
+      <div id="panel-cost" class="panel-content"></div>
+    </aside>
+  </main>
+  <footer id="bottombar">
+    <div class="mode-selector">
+      <button class="mode-btn" data-mode="plan">规划</button>
+      <button class="mode-btn active" data-mode="assist">助手</button>
+      <button class="mode-btn" data-mode="speed">极速</button>
+    </div>
+    <input id="user-input" type="text" placeholder="输入你的指令…" autofocus>
+    <button id="send-btn">发送</button>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

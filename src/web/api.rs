@@ -129,6 +129,41 @@ pub async fn setup_handler(
     }
 }
 
+/// 诊断：测试 API 连通性
+pub async fn ping_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let config = state.config.lock().await.clone();
+    let key_ok = !config.effective_api_key().is_empty();
+    if !key_ok {
+        return Json(serde_json::json!({"ok": false, "error": "未配置 API Key"}));
+    }
+
+    let client = match crate::engine::inference::InferenceClient::new(&config) {
+        Ok(c) => c,
+        Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("客户端创建失败: {}", e)})),
+    };
+
+    let messages = vec![
+        crate::engine::inference::ChatMessage::user("你好，请回复 OK"),
+    ];
+
+    match client.chat_stream(messages).await {
+        Ok(mut stream) => {
+            use futures::StreamExt;
+            let mut text = String::new();
+            while let Some(r) = stream.next().await {
+                match r {
+                    Ok(c) => text.push_str(&c.content),
+                    Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+                }
+            }
+            Json(serde_json::json!({"ok": true, "response": text}))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
 /// SSE 流式对话（调用真实 DeepSeek API）
 pub async fn chat_handler(
     State(state): State<SharedState>,
@@ -138,13 +173,17 @@ pub async fn chat_handler(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        // 构建消息
+        // 先发一个确认事件，验证 SSE 通道正常
+        let _ = tx.send(Ok(Event::default().data(
+            serde_json::json!({"type": "chunk", "content": "🔌 正在连接 DeepSeek..."}).to_string()
+        )));
+
         let config = state_clone.config.lock().await.clone();
         let client = match crate::engine::inference::InferenceClient::new(&config) {
             Ok(c) => c,
             Err(e) => {
                 let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                    serde_json::json!({"type": "error", "message": format!("创建客户端失败: {}", e)}).to_string()
                 )));
                 return;
             }
@@ -155,14 +194,15 @@ pub async fn chat_handler(
             crate::engine::inference::ChatMessage::user(&req.message),
         ];
 
-        // 调用 DeepSeek API 流式
         match client.chat_stream(messages).await {
             Ok(mut stream) => {
                 use futures::StreamExt;
+                let mut has_content = false;
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
                             if !chunk.content.is_empty() {
+                                has_content = true;
                                 let _ = tx.send(Ok(Event::default().data(
                                     serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
                                 )));
@@ -175,15 +215,20 @@ pub async fn chat_handler(
                         }
                         Err(e) => {
                             let _ = tx.send(Ok(Event::default().data(
-                                serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                                serde_json::json!({"type": "error", "message": format!("流式错误: {}", e)}).to_string()
                             )));
                         }
                     }
                 }
+                if !has_content {
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
+                    )));
+                }
             }
             Err(e) => {
                 let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                    serde_json::json!({"type": "error", "message": format!("API 调用失败: {}", e)}).to_string()
                 )));
             }
         }

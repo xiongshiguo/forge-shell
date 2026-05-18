@@ -55,7 +55,7 @@ pub struct AiConfig {
 }
 
 fn default_model() -> String {
-    "deepseek-v4-pro".into()
+    "deepseek-chat".into()
 }
 fn default_flash_model() -> String {
     "deepseek-v4-flash".into()

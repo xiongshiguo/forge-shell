@@ -222,7 +222,7 @@ impl App {
         while matches!(state, RunState::Running) {
             // 更新指标
             self.memory_usage = self.estimate_memory();
-            self.cache_hit_rate = self.context_manager.hit_rate().max(0.80);
+            self.cache_hit_rate = self.context_manager.hit_rate();
 
             // 消费后台结果
             self.consume_background_results();
@@ -480,7 +480,7 @@ impl App {
         )));
 
         // 更新指标
-        self.cache_hit_rate = (self.context_manager.hit_rate() + 0.02).min(0.98);
+        self.cache_hit_rate = self.context_manager.hit_rate();
         self.total_cost += plan.estimated_total_tokens as f64 * 0.000001;
         self.active_agents = plan.parallel_groups.first().map(|g| g.len()).unwrap_or(0);
 

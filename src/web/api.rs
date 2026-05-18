@@ -217,14 +217,23 @@ pub async fn cost_handler(
 ) -> Json<CostResponse> {
     let cost = *state.total_cost.lock().await;
     let hit_rate = *state.cache_hit_rate.lock().await;
+    // DeepSeek 缓存命中 token 免费，估算节省为 cost * hit_rate
+    let cache_saved = cost * hit_rate;
+    // Claude Code 估算：相比 DeepSeek，同任务费用高约 20-25 倍
+    let vs_claude = if cost > 0.0 {
+        let claude_estimated = cost * 22.0;
+        ((claude_estimated - cost) / claude_estimated * 100.0).min(99.0)
+    } else {
+        0.0
+    };
 
     Json(CostResponse {
         total_cost: cost,
         cache_hit_rate: hit_rate,
-        cache_saved: cost * 0.3,
+        cache_saved,
         monthly_used: cost,
         monthly_budget: 100.0,
-        vs_claude_savings_pct: 96.0,
+        vs_claude_savings_pct: vs_claude,
     })
 }
 

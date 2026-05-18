@@ -41,7 +41,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         context_manager: Mutex::new(ctx_mgr),
         orchestrator: Orchestrator::new(max_agents),
         total_cost: Mutex::new(0.0),
-        cache_hit_rate: Mutex::new(0.94),
+        cache_hit_rate: Mutex::new(0.0),
         active_agents: Mutex::new(0),
         has_api_key: has_key,
     });

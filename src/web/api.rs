@@ -185,6 +185,50 @@ pub async fn setup_handler(
     }
 }
 
+/// 执行沙箱命令（cargo check/test/build 等白名单命令）
+pub async fn exec_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let cmd = req["command"].as_str().unwrap_or("");
+    let cwd = req["cwd"].as_str().unwrap_or(".");
+
+    // 白名单检查
+    let allowed = ["cargo check", "cargo test", "cargo build", "cargo fmt", "cargo clippy",
+                   "git status", "git diff", "git log", "git branch", "rustc --version", "cargo --version"];
+    let cmd_trimmed = cmd.trim();
+    let is_allowed = allowed.iter().any(|a| cmd_trimmed.starts_with(a));
+
+    if !is_allowed {
+        return Json(serde_json::json!({
+            "ok": false, "stdout": "", "stderr": "命令不在白名单中。允许: cargo check/test/build/fmt/clippy, git status/diff/log/branch",
+            "exit_code": -1
+        }));
+    }
+
+    // 用 state 获取当前工作目录
+    let work_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(cwd));
+
+    match tokio::process::Command::new("cmd")
+        .args(["/C", cmd_trimmed])
+        .current_dir(&work_dir)
+        .output()
+        .await
+    {
+        Ok(output) => {
+            Json(serde_json::json!({
+                "ok": output.status.success(),
+                "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
+                "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
+                "exit_code": output.status.code().unwrap_or(-1),
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "ok": false, "stdout": "", "stderr": e.to_string(), "exit_code": -1
+        })),
+    }
+}
+
 /// 诊断：测试 API 连通性
 pub async fn ping_handler(
     State(state): State<SharedState>,
@@ -230,12 +274,20 @@ pub async fn chat_handler(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        // 先发一个确认事件，验证 SSE 通道正常
-        let _ = tx.send(Ok(Event::default().data(
-            serde_json::json!({"type": "chunk", "content": "🔌 正在连接 DeepSeek..."}).to_string()
-        )));
+        let mut config = state_clone.config.lock().await.clone();
 
-        let config = state_clone.config.lock().await.clone();
+        // 模型路由：根据意图复杂度动态选择模型
+        let router = crate::engine::router::ModelRouter::new(
+            config.ai.default_model.clone(),
+            config.ai.flash_model.clone(),
+        );
+        let decision = router.decide(&req.message, 0);
+        config.ai.default_model = decision.model.clone();
+
+        let emoji = if matches!(decision.complexity, crate::engine::router::Complexity::Simple) { "⚡" } else { "🧠" };
+        let _ = tx.send(Ok(Event::default().data(
+            serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}复杂度，预计¥{:.4})", decision.model, emoji, decision.complexity.name(), decision.estimated_cost)}).to_string()
+        )));
         let client = match crate::engine::inference::InferenceClient::new(&config) {
             Ok(c) => c,
             Err(e) => {

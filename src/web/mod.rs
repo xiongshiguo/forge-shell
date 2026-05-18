@@ -7,8 +7,8 @@ pub mod static_files;
 
 use crate::config::Config;
 use crate::agent::orchestrator::Orchestrator;
-use crate::agent::dispatcher::Dispatcher;
 use crate::engine::context::ContextManager;
+use crate::evolution::EvolutionCoordinator;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use axum::{Router, routing::get};
@@ -23,6 +23,7 @@ pub struct AppState {
     pub cache_hit_rate: Mutex<f64>,
     pub active_agents: Mutex<usize>,
     pub has_api_key: bool,
+    pub evolution: Mutex<EvolutionCoordinator>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -44,6 +45,9 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         cache_hit_rate: Mutex::new(0.0),
         active_agents: Mutex::new(0),
         has_api_key: has_key,
+        evolution: Mutex::new(EvolutionCoordinator::new(
+            crate::config::forge_data_dir().join("evolution")
+        )),
     });
 
     let app = Router::new()
@@ -55,6 +59,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/setup", axum::routing::post(api::setup_handler))
         .route("/api/check-key", get(api::check_key_handler))
         .route("/api/ping", get(api::ping_handler))
+        .route("/api/evolution", get(api::evolution_handler))
         // 静态文件
         .route("/", get(static_files::index_html))
         .route("/style.css", get(static_files::style_css))

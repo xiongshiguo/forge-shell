@@ -8,7 +8,6 @@ mod agent;
 mod engine;
 mod tui;
 mod web;
-#[cfg(feature = "evolution")]
 mod evolution;
 
 use clap::Parser;

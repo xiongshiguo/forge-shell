@@ -81,6 +81,33 @@ pub struct CommitItem {
 
 // ---- Handler ----
 
+/// 进化状态
+pub async fn evolution_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let evolution = state.evolution.lock().await;
+    let summary = evolution.summary();
+    let sops: Vec<serde_json::Value> = evolution.sop_library.all().iter().map(|s| {
+        serde_json::json!({
+            "id": s.id,
+            "title": s.title,
+            "triggers": s.triggers,
+            "usage_count": s.usage_count,
+            "success_rate": s.success_rate,
+            "source": s.source,
+        })
+    }).collect();
+
+    Json(serde_json::json!({
+        "summary": {
+            "total_experiences": summary.total_experiences,
+            "success_rate": summary.success_rate,
+            "sop_count": summary.sop_count,
+        },
+        "sops": sops,
+    }))
+}
+
 /// 检查是否已配置 API Key（动态读取，不依赖启动时快照）
 pub async fn check_key_handler(
     State(state): State<SharedState>,
@@ -221,6 +248,16 @@ pub async fn chat_handler(
                         }
                     }
                 }
+                // 记录成功经验 + 匹配 SOP
+                {
+                    let mut evo = state_clone.evolution.lock().await;
+                    let dummy_output = "[流式响应已完成]";
+                    evo.record_turn(&req.message, dummy_output, has_content);
+                    if has_content {
+                        let _ = evo.match_sop(&req.message);
+                    }
+                }
+
                 if !has_content {
                     let _ = tx.send(Ok(Event::default().data(
                         serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
@@ -228,9 +265,13 @@ pub async fn chat_handler(
                 }
             }
             Err(e) => {
+                let error_msg = format!("API 调用失败: {}", e);
                 let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": format!("API 调用失败: {}", e)}).to_string()
+                    serde_json::json!({"type": "error", "message": &error_msg}).to_string()
                 )));
+                // 记录失败经验
+                let mut evo = state_clone.evolution.lock().await;
+                evo.record_turn(&req.message, &error_msg, false);
             }
         }
     });

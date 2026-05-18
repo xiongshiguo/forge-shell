@@ -127,75 +127,64 @@ pub async fn setup_handler(
     }
 }
 
-/// SSE 流式对话
+/// SSE 流式对话（调用真实 DeepSeek API）
 pub async fn chat_handler(
     State(state): State<SharedState>,
     Json(req): Json<ChatRequest>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
     let state_clone = state.clone();
+
     tokio::spawn(async move {
-        // 编排任务
-        let plan = {
-            let orch = &state_clone.orchestrator;
-            orch.decompose(&req.message)
+        // 构建消息
+        let config = state_clone.config.lock().await.clone();
+        let client = match crate::engine::inference::InferenceClient::new(&config) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                )));
+                return;
+            }
         };
 
-        // 发送编排信息
-        let _ = tx.send(Ok(Event::default()
-            .data(serde_json::json!({
-                "type": "plan",
-                "tasks": plan.tasks.len(),
-                "groups": plan.parallel_groups.len(),
-                "gain": plan.parallelism_gain
-            }).to_string())));
+        let messages = vec![
+            crate::engine::inference::ChatMessage::system("你是熔炉 ForgeShell，一个中文 AI 编程助手。回答简洁实用，代码示例用 Rust。"),
+            crate::engine::inference::ChatMessage::user(&req.message),
+        ];
 
-        // 模拟流式响应
-        let response_text = format!(
-            "收到指令：「{}」。已拆解为 {} 个子任务，{} 组并行执行。预估并行增益 {:.1}x。",
-            req.message, plan.tasks.len(), plan.parallel_groups.len(), plan.parallelism_gain
-        );
-        let words: Vec<String> = response_text
-            .split_inclusive(|c: char| c == '。' || c == '，')
-            .map(|s| s.to_string())
-            .collect();
-
-        for word in words {
-            let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "chunk", "content": word}).to_string()
-            )));
-            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        // 调用 DeepSeek API 流式
+        match client.chat_stream(messages).await {
+            Ok(mut stream) => {
+                use futures::StreamExt;
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            if !chunk.content.is_empty() {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
+                                )));
+                            }
+                            if chunk.finish_reason.is_some() {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "done", "finish_reason": chunk.finish_reason}).to_string()
+                                )));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                            )));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                )));
+            }
         }
-
-        // 更新成本
-        {
-            let mut cost = state_clone.total_cost.lock().await;
-            *cost += plan.estimated_total_tokens as f64 * 0.000001;
-        }
-
-        // 调度任务
-        let max_agents = { state_clone.config.lock().await.engine.max_parallel_agents };
-        let dispatcher = Dispatcher::new(state_clone.config.lock().await.clone(), max_agents);
-        {
-            let mut agents = state_clone.active_agents.lock().await;
-            *agents = plan.parallel_groups.first().map(|g| g.len()).unwrap_or(0);
-        }
-        let result = dispatcher.dispatch(plan).await;
-        {
-            let mut agents = state_clone.active_agents.lock().await;
-            *agents = 0;
-        }
-
-        let _ = tx.send(Ok(Event::default().data(
-            serde_json::json!({
-                "type": "done",
-                "success": result.success_count,
-                "failure": result.failure_count,
-                "tokens": result.total_tokens,
-                "duration_ms": result.total_duration_ms
-            }).to_string()
-        )));
     });
 
     Sse::new(UnboundedReceiverStream::new(rx))

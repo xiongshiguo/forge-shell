@@ -79,11 +79,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 检查是否配置了 API Key
-    let effective_key = cfg.effective_api_key();
-    if effective_key.is_empty() {
-        anyhow::bail!(
-            "未设置 DeepSeek API Key！\n\n请通过以下方式之一设置：\n  forge --key sk-你的key      # 命令行传参（推荐）\n  forge -k sk-你的key          # 简写\n  setx DEEPSEEK_API_KEY sk-你的key  # 环境变量（永久）"
-        );
+    let has_key = !cfg.effective_api_key().is_empty();
+    if !has_key {
+        if cli.web {
+            tracing::warn!("⚠ 未配置 API Key，Web UI 将显示欢迎配置页");
+        } else {
+            anyhow::bail!(
+                "未设置 DeepSeek API Key！\n\n请通过以下方式之一设置：\n  forge --key sk-你的key      # 命令行传参（推荐）\n  forge -k sk-你的key          # 简写\n  forge --web --key sk-你的key   # Web 模式\n  setx DEEPSEEK_API_KEY sk-你的key  # 环境变量（永久）"
+            );
+        }
     }
 
     tracing::info!("配置加载完成，工作目录: {}", cli.dir);

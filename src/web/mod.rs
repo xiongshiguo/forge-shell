@@ -16,12 +16,13 @@ use tower_http::cors::CorsLayer;
 
 /// Web 应用共享状态
 pub struct AppState {
-    pub config: Config,
+    pub config: Mutex<Config>,
     pub context_manager: Mutex<ContextManager>,
     pub orchestrator: Orchestrator,
     pub total_cost: Mutex<f64>,
     pub cache_hit_rate: Mutex<f64>,
     pub active_agents: Mutex<usize>,
+    pub has_api_key: bool,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -34,13 +35,15 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
     let mut ctx_mgr = ContextManager::new(cache_entries, session_rounds);
     ctx_mgr.init_system_prompt(crate::tui::app::SYSTEM_PROMPT);
 
+    let has_key = !config.effective_api_key().is_empty();
     let state = Arc::new(AppState {
-        config,
+        config: Mutex::new(config),
         context_manager: Mutex::new(ctx_mgr),
         orchestrator: Orchestrator::new(max_agents),
         total_cost: Mutex::new(0.0),
         cache_hit_rate: Mutex::new(0.94),
         active_agents: Mutex::new(0),
+        has_api_key: has_key,
     });
 
     let app = Router::new()
@@ -49,6 +52,8 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/status", get(api::status_handler))
         .route("/api/cost", get(api::cost_handler))
         .route("/api/project", get(api::project_handler))
+        .route("/api/setup", axum::routing::post(api::setup_handler))
+        .route("/api/check-key", get(api::check_key_handler))
         // 静态文件
         .route("/", get(static_files::index_html))
         .route("/style.css", get(static_files::style_css))

@@ -1,22 +1,96 @@
-// 熔炉 Web UI - 应用逻辑
+// 熔炉 Web UI
 
 let currentMode = 'assist';
-const messagesEl = document.getElementById('messages');
-const inputEl = document.getElementById('user-input');
-const sendBtn = document.getElementById('send-btn');
-const costEl = document.getElementById('topbar-cost');
 
-// ---- 初始化 ----
-document.addEventListener('DOMContentLoaded', () => {
+// ---- 启动：先检查 API Key ----
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const resp = await fetch('/api/check-key');
+    const data = await resp.json();
+    if (data.has_key) {
+      showMainUI();
+    } else {
+      showSetup();
+    }
+  } catch (e) {
+    // 如果请求失败，显示 setup
+    showSetup();
+  }
+});
+
+// ---- 配置页 ----
+function showSetup() {
+  document.getElementById('setup-page').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+
+  const btn = document.getElementById('setup-btn');
+  const keyInput = document.getElementById('setup-key');
+  const msgEl = document.getElementById('setup-msg');
+
+  async function submitKey() {
+    const key = keyInput.value.trim();
+    if (!key) {
+      msgEl.textContent = '请输入 API Key';
+      msgEl.style.color = 'var(--red)';
+      return;
+    }
+    if (!key.startsWith('sk-')) {
+      msgEl.textContent = 'API Key 格式错误，应以 sk- 开头';
+      msgEl.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '保存中…';
+    msgEl.textContent = '';
+
+    try {
+      const resp = await fetch('/api/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: key })
+      });
+      const data = await resp.json();
+
+      if (data.success) {
+        msgEl.textContent = data.message;
+        msgEl.style.color = 'var(--green)';
+        setTimeout(() => showMainUI(), 600);
+      } else {
+        msgEl.textContent = data.message;
+        msgEl.style.color = 'var(--red)';
+        btn.disabled = false;
+        btn.textContent = '保存并开始使用';
+      }
+    } catch (e) {
+      msgEl.textContent = '网络错误，请确认熔炉正在运行';
+      msgEl.style.color = 'var(--red)';
+      btn.disabled = false;
+      btn.textContent = '保存并开始使用';
+    }
+  }
+
+  btn.addEventListener('click', submitKey);
+  keyInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitKey();
+  });
+}
+
+// ---- 主界面 ----
+function showMainUI() {
+  document.getElementById('setup-page').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+
   setupModeButtons();
   setupPanelTabs();
   setupSend();
+  addMessage('system', '🔥 熔炉已就绪。输入指令开始编程。');
   loadStatus();
   loadPanels();
   setInterval(loadStatus, 3000);
-});
+}
 
-// ---- 模式切换 ----
+// ---- 模式按钮 ----
 function setupModeButtons() {
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -42,13 +116,14 @@ function setupPanelTabs() {
 
 // ---- 发送消息 ----
 function setupSend() {
-  sendBtn.addEventListener('click', sendMessage);
-  inputEl.addEventListener('keydown', e => {
+  document.getElementById('send-btn').addEventListener('click', sendMessage);
+  document.getElementById('user-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') sendMessage();
   });
 }
 
 async function sendMessage() {
+  const inputEl = document.getElementById('user-input');
   const text = inputEl.value.trim();
   if (!text) return;
   inputEl.value = '';
@@ -79,9 +154,8 @@ async function sendMessage() {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
-            const data = JSON.parse(line.slice(6));
-            handleSSE(data);
-          } catch (e) { /* skip parse errors */ }
+            handleSSE(JSON.parse(line.slice(6)));
+          } catch (e) {}
         }
       }
     }
@@ -95,12 +169,10 @@ function handleSSE(data) {
   if (data.type === 'plan') {
     addMessage('system', `拆解为 ${data.tasks} 个子任务，${data.groups} 组并行（增益 ${data.gain.toFixed(1)}x）`);
   } else if (data.type === 'chunk') {
-    const streamEl = document.getElementById('streaming');
-    streamEl.textContent += data.content;
+    document.getElementById('streaming').textContent += data.content;
   } else if (data.type === 'done') {
-    const streamEl = document.getElementById('streaming');
-    const text = streamEl.textContent;
-    streamEl.textContent = '';
+    const text = document.getElementById('streaming').textContent;
+    document.getElementById('streaming').textContent = '';
     if (text) addMessage('assistant', text);
     addMessage('system', `完成: ${data.success} 成功 / ${data.failure} 失败 | ${data.tokens} tokens | ${data.duration_ms}ms`);
   }
@@ -111,6 +183,7 @@ function addMessage(role, text) {
   const div = document.createElement('div');
   div.className = 'message ' + role;
   div.textContent = text;
+  const messagesEl = document.getElementById('messages');
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -120,8 +193,9 @@ async function loadStatus() {
   try {
     const resp = await fetch('/api/status');
     const data = await resp.json();
-    costEl.textContent = `💰 ¥${data.cost.toFixed(4)} | ${(data.hit_rate * 100).toFixed(0)}%`;
-  } catch (e) { /* 忽略 */ }
+    document.getElementById('topbar-cost').textContent =
+      `💰 ¥${data.cost.toFixed(4)} | ${(data.hit_rate * 100).toFixed(0)}%`;
+  } catch (e) {}
 }
 
 // ---- 面板数据 ----
@@ -173,5 +247,5 @@ async function loadPanels() {
         `).join('')}
       </div>
     `;
-  } catch (e) { /* 忽略 */ }
+  } catch (e) {}
 }

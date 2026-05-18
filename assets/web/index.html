@@ -7,7 +7,23 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app">
+
+<!-- 首次配置页面 -->
+<div id="setup-page">
+  <div class="setup-card">
+    <div class="setup-logo">🔥</div>
+    <h1>欢迎使用熔炉</h1>
+    <p class="setup-subtitle">以意为炉，以语为锤，铸代码之剑</p>
+    <p class="setup-desc">请输入你的 DeepSeek API Key 开始使用</p>
+    <input id="setup-key" type="password" placeholder="sk-xxxxxxxxxxxxxxxx" autofocus>
+    <p class="setup-hint">Key 以 sk- 开头 · 去 <a href="https://platform.deepseek.com" target="_blank">DeepSeek 开放平台</a> 获取</p>
+    <button id="setup-btn">保存并开始使用</button>
+    <p id="setup-msg"></p>
+  </div>
+</div>
+
+<!-- 主界面（初始隐藏） -->
+<div id="app" style="display:none">
   <header id="topbar">
     <span class="logo">🔥 熔炉</span>
     <span id="topbar-cost">💰 ¥0.0000 | 94%</span>
@@ -39,6 +55,7 @@
     <button id="send-btn">发送</button>
   </footer>
 </div>
+
 <script src="app.js"></script>
 </body>
 </html>

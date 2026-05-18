@@ -2,6 +2,7 @@
 
 use super::SharedState;
 use crate::agent::dispatcher::Dispatcher;
+use crate::config::Config;
 use axum::{Json, extract::State, response::sse::{Event, Sse, KeepAlive}};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -12,7 +13,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
     pub message: String,
-    pub mode: Option<String>, // plan / assist / speed
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,6 +24,22 @@ pub struct ChatResponse {
     pub parallelism_gain: f64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SetupRequest {
+    pub api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetupResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckKeyResponse {
+    pub has_key: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatusResponse {
     pub mode: String,
@@ -31,6 +48,7 @@ pub struct StatusResponse {
     pub active_agents: usize,
     pub max_agents: usize,
     pub memory_mb: f64,
+    pub has_key: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +80,52 @@ pub struct CommitItem {
 }
 
 // ---- Handler ----
+
+/// 检查是否已配置 API Key
+pub async fn check_key_handler(
+    State(state): State<SharedState>,
+) -> Json<CheckKeyResponse> {
+    Json(CheckKeyResponse { has_key: state.has_api_key })
+}
+
+/// 首次启动：保存用户输入的 API Key 到本地配置
+pub async fn setup_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<SetupRequest>,
+) -> Json<SetupResponse> {
+    let key = req.api_key.trim().to_string();
+    if key.is_empty() {
+        return Json(SetupResponse { success: false, message: "API Key 不能为空".into() });
+    }
+    if !key.starts_with("sk-") {
+        return Json(SetupResponse { success: false, message: "API Key 格式错误，应以 sk- 开头".into() });
+    }
+
+    // 保存到配置
+    let config_path = crate::config::forge_config_path();
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let mut config = state.config.lock().await;
+    config.ai.api_key = key;
+    // 也写到环境变量（当前进程）
+    unsafe { std::env::set_var("DEEPSEEK_API_KEY", &config.ai.api_key); }
+
+    if let Ok(toml_str) = toml::to_string_pretty(&*config) {
+        if std::fs::write(&config_path, toml_str).is_ok() {
+            drop(config);
+            Json(SetupResponse {
+                success: true,
+                message: "API Key 已保存！熔炉就绪 🔥".into(),
+            })
+        } else {
+            Json(SetupResponse { success: false, message: "保存配置文件失败，请检查磁盘权限".into() })
+        }
+    } else {
+        Json(SetupResponse { success: false, message: "配置序列化失败".into() })
+    }
+}
 
 /// SSE 流式对话
 pub async fn chat_handler(
@@ -111,7 +175,8 @@ pub async fn chat_handler(
         }
 
         // 调度任务
-        let dispatcher = Dispatcher::new(state_clone.config.clone(), state_clone.config.engine.max_parallel_agents);
+        let max_agents = { state_clone.config.lock().await.engine.max_parallel_agents };
+        let dispatcher = Dispatcher::new(state_clone.config.lock().await.clone(), max_agents);
         {
             let mut agents = state_clone.active_agents.lock().await;
             *agents = plan.parallel_groups.first().map(|g| g.len()).unwrap_or(0);
@@ -144,14 +209,16 @@ pub async fn status_handler(
     let cost = *state.total_cost.lock().await;
     let hit_rate = *state.cache_hit_rate.lock().await;
     let active = *state.active_agents.lock().await;
+    let max_agents = state.config.lock().await.engine.max_parallel_agents;
 
     Json(StatusResponse {
         mode: "assist".into(),
         cost,
         hit_rate,
         active_agents: active,
-        max_agents: state.config.engine.max_parallel_agents,
+        max_agents,
         memory_mb: 15.0,
+        has_key: state.has_api_key,
     })
 }
 

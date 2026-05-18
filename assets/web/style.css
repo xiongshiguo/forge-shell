@@ -236,6 +236,98 @@ body {
   background: var(--purple-light);
 }
 
+/* ---- 首次配置页 ---- */
+#setup-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.setup-card {
+  text-align: center;
+  padding: 48px 40px;
+  background: var(--bg2);
+  border: 1px solid var(--bg3);
+  border-radius: 16px;
+  max-width: 440px;
+  width: 90%;
+}
+
+.setup-logo {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.setup-card h1 {
+  font-size: 26px;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+
+.setup-subtitle {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin-bottom: 32px;
+}
+
+.setup-desc {
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 20px;
+}
+
+#setup-key {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--bg3);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: monospace;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+  margin-bottom: 12px;
+}
+
+#setup-key:focus {
+  border-color: var(--purple-light);
+}
+
+.setup-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 24px;
+}
+
+.setup-hint a {
+  color: var(--purple-light);
+}
+
+#setup-btn {
+  padding: 12px 32px;
+  background: var(--purple);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#setup-btn:hover {
+  background: var(--purple-light);
+}
+
+#setup-msg {
+  margin-top: 16px;
+  font-size: 14px;
+  min-height: 20px;
+}
+
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar {
   width: 6px;

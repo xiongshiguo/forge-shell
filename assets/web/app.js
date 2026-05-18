@@ -166,7 +166,10 @@ async function sendMessage() {
 }
 
 function handleSSE(data) {
-  if (data.type === 'plan') {
+  if (data.type === 'error') {
+    document.getElementById('streaming').textContent = '';
+    addMessage('system', '❌ ' + data.message);
+  } else if (data.type === 'plan') {
     addMessage('system', `拆解为 ${data.tasks} 个子任务，${data.groups} 组并行（增益 ${data.gain.toFixed(1)}x）`);
   } else if (data.type === 'chunk') {
     document.getElementById('streaming').textContent += data.content;
@@ -174,7 +177,6 @@ function handleSSE(data) {
     const text = document.getElementById('streaming').textContent;
     document.getElementById('streaming').textContent = '';
     if (text) addMessage('assistant', text);
-    addMessage('system', `完成: ${data.success} 成功 / ${data.failure} 失败 | ${data.tokens} tokens | ${data.duration_ms}ms`);
   }
 }
 

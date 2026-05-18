@@ -81,11 +81,13 @@ pub struct CommitItem {
 
 // ---- Handler ----
 
-/// 检查是否已配置 API Key
+/// 检查是否已配置 API Key（动态读取，不依赖启动时快照）
 pub async fn check_key_handler(
     State(state): State<SharedState>,
 ) -> Json<CheckKeyResponse> {
-    Json(CheckKeyResponse { has_key: state.has_api_key })
+    let config = state.config.lock().await;
+    let has_key = !config.effective_api_key().is_empty();
+    Json(CheckKeyResponse { has_key })
 }
 
 /// 首次启动：保存用户输入的 API Key 到本地配置

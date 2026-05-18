@@ -25,9 +25,9 @@ struct Cli {
     #[arg(short, long, default_value = "info")]
     log_level: String,
 
-    /// 启动 Web UI 模式（默认启动 TUI）
+    /// 启动 TUI 终端模式（默认启动 Web UI）
     #[arg(long, default_value_t = false)]
-    web: bool,
+    tui: bool,
 
     /// DeepSeek API Key（也可通过环境变量 DEEPSEEK_API_KEY 设置）
     #[arg(short, long)]
@@ -81,11 +81,11 @@ async fn main() -> anyhow::Result<()> {
     // 检查是否配置了 API Key
     let has_key = !cfg.effective_api_key().is_empty();
     if !has_key {
-        if cli.web {
+        if !cli.tui {
             tracing::warn!("⚠ 未配置 API Key，Web UI 将显示欢迎配置页");
         } else {
             anyhow::bail!(
-                "未设置 DeepSeek API Key！\n\n请通过以下方式之一设置：\n  forge --key sk-你的key      # 命令行传参（推荐）\n  forge -k sk-你的key          # 简写\n  forge --web --key sk-你的key   # Web 模式\n  setx DEEPSEEK_API_KEY sk-你的key  # 环境变量（永久）"
+                "未设置 DeepSeek API Key！\n\n请通过以下方式之一设置：\n  forge --key sk-你的key      # 命令行传参（推荐）\n  forge -k sk-你的key          # 简写\n  forge --tui --key sk-你的key  # TUI 终端模式\n  setx DEEPSEEK_API_KEY sk-你的key  # 环境变量（永久）"
             );
         }
     }
@@ -94,12 +94,12 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("AI 后端: {}", cfg.ai.default_model);
     tracing::info!("缓存命中率目标: ≥97%");
 
-    if cli.web {
-        tracing::info!("🌐 启动 Web UI 模式");
-        web::run_web(cfg).await?;
-    } else {
+    if cli.tui {
         let mut app = tui::App::new(cfg)?;
         app.run()?;
+    } else {
+        tracing::info!("🌐 启动 Web UI 模式");
+        web::run_web(cfg).await?;
     }
 
     Ok(())

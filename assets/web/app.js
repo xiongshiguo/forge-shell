@@ -85,9 +85,21 @@ function showMainUI() {
   setupPanelTabs();
   setupSend();
   addMessage('system', '🔥 熔炉已就绪。输入指令开始编程。');
+  checkUpdate();
   loadStatus();
   loadPanels();
   setInterval(loadStatus, 3000);
+}
+
+// ---- 版本检测 ----
+async function checkUpdate() {
+  try {
+    const resp = await fetch('/api/update-check');
+    const data = await resp.json();
+    if (data.update_available) {
+      addMessage('system', `🔔 新版本 v${data.latest} 可用！当前: v${data.current}。下载: ${data.download_url}`);
+    }
+  } catch(e) {}
 }
 
 // ---- 模式按钮 ----

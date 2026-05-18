@@ -81,6 +81,35 @@ pub struct CommitItem {
 
 // ---- Handler ----
 
+/// 检查更新
+pub async fn update_check_handler() -> Json<serde_json::Value> {
+    let current = env!("CARGO_PKG_VERSION");
+    match check_latest_version().await {
+        Ok(Some(latest)) if latest != current => {
+            Json(serde_json::json!({
+                "update_available": true,
+                "current": current,
+                "latest": latest,
+                "download_url": format!("https://gitee.com/forgemaster/forge-shell/releases/download/v{}/forge-shell.exe", latest),
+            }))
+        }
+        _ => Json(serde_json::json!({"update_available": false, "current": current})),
+    }
+}
+
+async fn check_latest_version() -> Result<Option<String>, reqwest::Error> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let resp = client
+        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/releases/latest")
+        .header("User-Agent", "ForgeShell-UpdateCheck")
+        .send()
+        .await?;
+    let json: serde_json::Value = resp.json().await?;
+    Ok(json["tag_name"].as_str().map(|s| s.trim_start_matches('v').to_string()))
+}
+
 /// 进化状态
 pub async fn evolution_handler(
     State(state): State<SharedState>,

@@ -60,6 +60,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/check-key", get(api::check_key_handler))
         .route("/api/ping", get(api::ping_handler))
         .route("/api/evolution", get(api::evolution_handler))
+        .route("/api/update-check", get(api::update_check_handler))
         // 静态文件
         .route("/", get(static_files::index_html))
         .route("/style.css", get(static_files::style_css))

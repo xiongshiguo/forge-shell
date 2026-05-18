@@ -145,6 +145,7 @@ pub async fn ping_handler(
     };
 
     let messages = vec![
+        crate::engine::inference::ChatMessage::system(crate::system_prompt::SYSTEM_PROMPT),
         crate::engine::inference::ChatMessage::user("你好，请回复 OK"),
     ];
 
@@ -190,7 +191,7 @@ pub async fn chat_handler(
         };
 
         let messages = vec![
-            crate::engine::inference::ChatMessage::system("你是熔炉 ForgeShell，一个中文 AI 编程助手。回答简洁实用，代码示例用 Rust。"),
+            crate::engine::inference::ChatMessage::system(crate::system_prompt::SYSTEM_PROMPT),
             crate::engine::inference::ChatMessage::user(&req.message),
         ];
 

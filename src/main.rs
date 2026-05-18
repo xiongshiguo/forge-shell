@@ -3,6 +3,7 @@ mod error;
 mod locale;
 mod utils;
 mod platform;
+mod system_prompt;
 mod agent;
 mod engine;
 mod tui;

@@ -33,7 +33,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
     let cache_entries = config.engine.session_cache_rounds * 20 + 10;
     let session_rounds = config.engine.session_cache_rounds;
     let mut ctx_mgr = ContextManager::new(cache_entries, session_rounds);
-    ctx_mgr.init_system_prompt(crate::tui::app::SYSTEM_PROMPT);
+    ctx_mgr.init_system_prompt(crate::system_prompt::SYSTEM_PROMPT);
 
     let has_key = !config.effective_api_key().is_empty();
     let state = Arc::new(AppState {

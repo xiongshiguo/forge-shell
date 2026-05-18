@@ -556,11 +556,4 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     Rect::new(x, y, popup_width, popup_height)
 }
 
-pub const SYSTEM_PROMPT: &str = r#"你是熔炉 (ForgeShell)，一个 AI 编程助手。
-你的工作方式是：
-1. 理解用户意图，拆解为可并行执行的子任务
-2. 优先执行只读操作（搜索、分析），再执行写操作
-3. 每个修改需经过"红-绿-重构"工作流
-4. 遵守约束标注，不绕过安全检查
-5. 所有回复使用中文
-"#;
+pub const SYSTEM_PROMPT: &str = crate::system_prompt::SYSTEM_PROMPT;

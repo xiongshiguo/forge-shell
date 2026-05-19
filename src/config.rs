@@ -178,7 +178,20 @@ impl Config {
         let config_path = forge_config_path();
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            let cfg: Config = toml::from_str(&content)?;
+            let mut cfg: Config = toml::from_str(&content)?;
+            // 迁移旧模型名
+            let mut changed = false;
+            if cfg.ai.default_model.contains("v4-pro") || cfg.ai.default_model.contains("v4-flash") {
+                cfg.ai.default_model = default_model();
+                changed = true;
+            }
+            if cfg.ai.flash_model.contains("v4-flash") {
+                cfg.ai.flash_model = default_flash_model();
+                changed = true;
+            }
+            if changed {
+                std::fs::write(&config_path, toml::to_string_pretty(&cfg)?)?;
+            }
             Ok(cfg)
         } else {
             let cfg = Config::default();

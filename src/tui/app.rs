@@ -139,7 +139,7 @@ impl App {
         let session_rounds = config.engine.session_cache_rounds;
 
         let mut ctx_mgr = ContextManager::new(cache_entries, session_rounds);
-        ctx_mgr.init_system_prompt(SYSTEM_PROMPT);
+        ctx_mgr.init_system_prompt(&crate::system_prompt::get_system_prompt());
 
         let orchestrator = Orchestrator::new(max_agents);
         let runtime_handle = tokio::runtime::Handle::current();
@@ -556,4 +556,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     Rect::new(x, y, popup_width, popup_height)
 }
 
-pub const SYSTEM_PROMPT: &str = crate::system_prompt::SYSTEM_PROMPT;

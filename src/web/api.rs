@@ -275,7 +275,7 @@ pub async fn ping_handler(
     };
 
     let messages = vec![
-        crate::engine::inference::ChatMessage::system(crate::system_prompt::SYSTEM_PROMPT),
+        crate::engine::inference::ChatMessage::system(&crate::system_prompt::get_system_prompt()),
         crate::engine::inference::ChatMessage::user("你好，请回复 OK"),
     ];
 
@@ -331,9 +331,9 @@ pub async fn chat_handler(
         // 加载跨会话上下文
         let context = load_context();
         let system_msg = if context.is_empty() {
-            crate::system_prompt::SYSTEM_PROMPT.to_string()
+            crate::system_prompt::get_system_prompt()
         } else {
-            format!("{}\n\n## 跨会话记忆\n以下是之前会话中你记住的重要内容：\n{}", crate::system_prompt::SYSTEM_PROMPT, context)
+            format!("{}\n\n## 跨会话记忆\n以下是之前会话中你记住的重要内容：\n{}", crate::system_prompt::get_system_prompt(), context)
         };
 
         let messages = vec![

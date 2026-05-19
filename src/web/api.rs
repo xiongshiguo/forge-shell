@@ -238,6 +238,39 @@ fn context_file_path() -> std::path::PathBuf {
         .join("FORGESHELL_CONTEXT.md")
 }
 
+fn scan_project() -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut info = format!("\n\n## 当前项目\n路径: {}\n", cwd.display());
+    if let Ok(entries) = std::fs::read_dir(&cwd) {
+        let mut dirs = vec![];
+        let mut files = vec![];
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" { continue; }
+            match e.file_type() {
+                Ok(t) if t.is_dir() => dirs.push(name),
+                _ => files.push(name),
+            }
+        }
+        dirs.sort(); files.sort();
+        info.push_str(&format!("目录: {}\n", dirs.join(", ")));
+        if !files.is_empty() {
+            info.push_str(&format!("文件: {}\n", files.iter().take(20).cloned().collect::<Vec<_>>().join(", ")));
+        }
+    }
+    // 检查是否有 Rust 项目
+    if cwd.join("Cargo.toml").exists() {
+        info.push_str("\n这是一个 Rust 项目（Cargo.toml 存在）。");
+    }
+    if cwd.join("package.json").exists() {
+        info.push_str("\n这是一个 Node 项目（package.json 存在）。");
+    }
+    if cwd.join("FORGESHELL_CONTEXT.md").exists() {
+        info.push_str("\nFORGESHELL_CONTEXT.md 存在，包含跨会话记忆。");
+    }
+    info
+}
+
 fn load_context() -> String {
     let path = context_file_path();
     if path.exists() {
@@ -513,13 +546,14 @@ pub async fn chat_handler(
             }
         };
 
-        // 加载跨会话上下文
+        // 加载项目上下文 + 跨会话记忆
         let context = load_context();
-        let system_msg = if context.is_empty() {
-            crate::system_prompt::get_system_prompt()
-        } else {
-            format!("{}\n\n## 跨会话记忆\n以下是之前会话中你记住的重要内容：\n{}", crate::system_prompt::get_system_prompt(), context)
-        };
+        let project_info = scan_project();
+        let mut system_msg = crate::system_prompt::get_system_prompt();
+        system_msg.push_str(&project_info);
+        if !context.is_empty() {
+            system_msg.push_str(&format!("\n\n## 跨会话记忆\n{}", context));
+        }
 
         let messages = vec![
             crate::engine::inference::ChatMessage::system(&system_msg),

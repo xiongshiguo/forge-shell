@@ -61,11 +61,11 @@ impl ModelRouter {
             pro_model,
             flash_model,
             simple_max_tokens: 1000,
+            // V4 Pro: ¥1/M in, ¥4/M out; V4 Flash: ¥0.1/M in, ¥0.4/M out
             pro_input_price: 1.0,
             pro_output_price: 4.0,
-            // DeepSeek 目前只有一个 chat 模型，Flash=Pro 同价，路由主要用于记录复杂度
-            flash_input_price: 1.0,
-            flash_output_price: 4.0,
+            flash_input_price: 0.1,
+            flash_output_price: 0.4,
         }
     }
 
@@ -186,8 +186,8 @@ impl ModelRouter {
 impl Default for ModelRouter {
     fn default() -> Self {
         Self::new(
-            "deepseek-chat".into(),
-            "deepseek-chat".into(),
+            "deepseek-v4-pro".into(),
+            "deepseek-v4-flash".into(),
         )
     }
 }
@@ -201,7 +201,7 @@ mod tests {
         let router = ModelRouter::default();
         let decision = router.decide("什么是 Rust 的所有权？", 0);
         assert_eq!(decision.complexity, Complexity::Simple);
-        assert!(decision.model.contains("chat"));
+        assert!(decision.model.contains("flash"));
     }
 
     #[test]
@@ -238,8 +238,8 @@ mod tests {
     fn test_cost_comparison() {
         let router = ModelRouter::default();
         let (pro_cost, flash_cost, savings) = router.cost_comparison(100000);
-        // Flash 和 Pro 当前同价（都用 deepseek-chat）
-        assert!((flash_cost - pro_cost).abs() < 0.001);
-        assert!((savings - 0.0).abs() < 0.001);
+        // Flash 应比 Pro 便宜很多 (1/10 价格)
+        assert!(flash_cost < pro_cost);
+        assert!(savings > 50.0);
     }
 }

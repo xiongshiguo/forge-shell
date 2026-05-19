@@ -55,10 +55,10 @@ pub struct AiConfig {
 }
 
 fn default_model() -> String {
-    "deepseek-chat".into()
+    "deepseek-v4-pro".into()
 }
 fn default_flash_model() -> String {
-    "deepseek-chat".into()
+    "deepseek-v4-flash".into()
 }
 fn default_api_base() -> String {
     "https://api.deepseek.com".into()
@@ -179,13 +179,13 @@ impl Config {
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
             let mut cfg: Config = toml::from_str(&content)?;
-            // 迁移旧模型名
+            // 迁移旧模型名 (deepseek-chat → deepseek-v4-flash 等)
             let mut changed = false;
-            if cfg.ai.default_model.contains("v4-pro") || cfg.ai.default_model.contains("v4-flash") {
+            if cfg.ai.default_model == "deepseek-chat" || cfg.ai.default_model == "deepseek-reasoner" {
                 cfg.ai.default_model = default_model();
                 changed = true;
             }
-            if cfg.ai.flash_model.contains("v4-flash") {
+            if cfg.ai.flash_model == "deepseek-chat" {
                 cfg.ai.flash_model = default_flash_model();
                 changed = true;
             }

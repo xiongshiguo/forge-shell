@@ -50,6 +50,14 @@ pub struct StatusResponse {
     pub max_agents: usize,
     pub memory_mb: f64,
     pub has_key: bool,
+    pub evolution: EvolutionStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EvolutionStatus {
+    pub experiences: usize,
+    pub sops: usize,
+    pub success_rate: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,14 +241,15 @@ pub async fn review_submit_handler(
         std::fs::write(review_dir.join(format!("review_{}.json", &review_id[..8])), json).ok();
     }
 
-    // 记录到进化引擎
-    {
+    let review_count = {
         let mut evo = state.evolution.lock().await;
         let summary: String = turns.iter().take(3).map(|t| t.chars().take(50).collect::<String>()).collect::<Vec<_>>().join(" | ");
         evo.record_turn(&summary, "session_review", true);
-    }
+        evo.try_reflect();
+        evo.summary()
+    };
 
-    Json(serde_json::json!({"ok": true, "id": review_id}))
+    Json(serde_json::json!({"ok": true, "id": review_id, "experiences": review_count.total_experiences, "sops": review_count.sop_count}))
 }
 
 fn extract_patterns(turns: &[String]) -> Vec<String> {
@@ -632,13 +641,18 @@ pub async fn chat_handler(
                         }
                     }
                 }
-                // 记录成功经验 + 匹配 SOP
+                // 记录经验 + 匹配 SOP + 自动反思
                 {
                     let mut evo = state_clone.evolution.lock().await;
-                    let dummy_output = "[流式响应已完成]";
-                    evo.record_turn(&req.message, dummy_output, has_content);
+                    evo.record_turn(&req.message, "[OK]", has_content);
                     if has_content {
-                        let _ = evo.match_sop(&req.message);
+                        let matches = evo.match_sop(&req.message);
+                        if !matches.is_empty() {
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "chunk", "content": format!("\n💡 天工阁匹配到 {} 条 SOP\n", matches.len())}).to_string()
+                            )));
+                        }
+                        evo.try_reflect();
                     }
                 }
 
@@ -672,6 +686,7 @@ pub async fn status_handler(
     let hit_rate = *state.cache_hit_rate.lock().await;
     let active = *state.active_agents.lock().await;
     let max_agents = state.config.lock().await.engine.max_parallel_agents;
+    let evo_summary = state.evolution.lock().await.summary();
 
     Json(StatusResponse {
         mode: "assist".into(),
@@ -681,6 +696,11 @@ pub async fn status_handler(
         max_agents,
         memory_mb: 15.0,
         has_key: state.has_api_key,
+        evolution: EvolutionStatus {
+            experiences: evo_summary.total_experiences,
+            sops: evo_summary.sop_count,
+            success_rate: evo_summary.success_rate,
+        },
     })
 }
 

@@ -41,7 +41,7 @@ impl EvolutionCoordinator {
         digest
     }
 
-    fn try_reflect(&mut self) {
+    pub fn try_reflect(&mut self) {
         let records = self.collector.load_all_records();
         let new_sops = self.reflection.reflect(&records, &mut self.sop_library);
         if !new_sops.is_empty() {

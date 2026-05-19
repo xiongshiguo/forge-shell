@@ -514,7 +514,7 @@ pub async fn read_handler(
     }
 }
 
-/// 联网搜索
+/// 联网搜索 — 三层引擎：GitHub → Gitee → DuckDuckGo（全部零配置）
 pub async fn web_search_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
@@ -523,28 +523,72 @@ pub async fn web_search_handler(
         return Json(serde_json::json!({"ok": false, "results": []}));
     }
 
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("ForgeShell/0.8")
+        .build()
+    {
         Ok(c) => c,
         Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
     };
 
-    // 用 DuckDuckGo Lite 搜索（无需 API Key）
-    let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(&query));
-    match client.get(&url).header("User-Agent", "Mozilla/5.0").send().await {
-        Ok(resp) => {
-            let html = resp.text().await.unwrap_or_default();
-            let snippets: Vec<&str> = html
-                .split("result__snippet")
-                .skip(1)
-                .filter_map(|s| s.split("</").next())
-                .map(|s| s.trim_start_matches('>').trim())
-                .filter(|s| s.len() > 10)
-                .take(8)
-                .collect();
-            Json(serde_json::json!({"ok": true, "results": snippets}))
+    let mut all_results: Vec<String> = Vec::new();
+
+    // 1. GitHub 代码搜索（公开 API，60次/小时免认证）
+    let gh_url = format!(
+        "https://api.github.com/search/repositories?q={}&sort=stars&per_page=5",
+        urlencoding(&query)
+    );
+    if let Ok(resp) = client.get(&gh_url).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(items) = json["items"].as_array() {
+                for item in items.iter().take(5) {
+                    let name = item["full_name"].as_str().unwrap_or("");
+                    let desc = item["description"].as_str().unwrap_or("").chars().take(80).collect::<String>();
+                    let stars = item["stargazers_count"].as_u64().unwrap_or(0);
+                    all_results.push(format!("[GitHub] {} ⭐{} — {}", name, stars, desc));
+                }
+            }
         }
-        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
     }
+
+    // 2. Gitee 仓库搜索（公开 API，免认证）
+    let gitee_url = format!(
+        "https://gitee.com/api/v5/search/repositories?q={}&sort=stars_count&per_page=5",
+        urlencoding(&query)
+    );
+    if let Ok(resp) = client.get(&gitee_url).send().await {
+        if let Ok(items) = resp.json::<Vec<serde_json::Value>>().await {
+            for item in items.iter().take(5) {
+                let name = item["full_name"].as_str().unwrap_or("");
+                let desc = item["description"].as_str().unwrap_or("").chars().take(80).collect::<String>();
+                all_results.push(format!("[Gitee] {} — {}", name, desc));
+            }
+        }
+    }
+
+    // 3. DuckDuckGo 兜底
+    let ddg_url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(&query));
+    if let Ok(resp) = client.get(&ddg_url).send().await {
+        let html = resp.text().await.unwrap_or_default();
+        let snippets: Vec<&str> = html
+            .split("result__snippet")
+            .skip(1)
+            .filter_map(|s| s.split("</").next())
+            .map(|s| s.trim_start_matches('>').trim())
+            .filter(|s| s.len() > 10)
+            .take(5)
+            .collect();
+        for s in snippets {
+            all_results.push(format!("[Web] {}", s));
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "results": all_results,
+        "sources": ["github", "gitee", "duckduckgo"]
+    }))
 }
 
 fn urlencoding(s: &str) -> String {

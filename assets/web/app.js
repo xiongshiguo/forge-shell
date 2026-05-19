@@ -97,9 +97,35 @@ async function checkUpdate() {
     const resp = await fetch('/api/update-check');
     const data = await resp.json();
     if (data.update_available) {
-      addMessage('system', `🔔 新版本 v${data.latest} 可用！当前: v${data.current}。下载: ${data.download_url}`);
+      var msg = '🔔 新版本 v' + data.latest + ' 可用！当前: v' + data.current;
+      addUpdateMessage(msg, data.latest);
     }
   } catch(e) {}
+}
+
+function addUpdateMessage(text, version) {
+  const div = document.createElement('div');
+  div.className = 'message system';
+  div.style.background = '#2d1f3d';
+  div.style.border = '1px solid var(--purple)';
+  div.innerHTML = text + ' <button onclick="doUpdate()" style="margin-left:12px;padding:4px 16px;background:var(--purple);color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px">立即更新并重启</button>';
+  document.getElementById('messages').appendChild(div);
+  document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+async function doUpdate() {
+  addMessage('system', '⬇ 正在下载最新版本...');
+  try {
+    const resp = await fetch('/api/update-now', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok) {
+      addMessage('system', '✅ ' + data.message);
+    } else {
+      addMessage('system', '❌ ' + data.error);
+    }
+  } catch(e) {
+    addMessage('system', '更新请求失败，浏览器刷新后再试');
+  }
 }
 
 // ---- 模式按钮 ----

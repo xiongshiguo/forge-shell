@@ -82,6 +82,76 @@ pub struct CommitItem {
 
 // ---- Handler ----
 
+/// 一键更新：下载新版本 → 替换 → 重启
+pub async fn update_now_handler() -> Json<serde_json::Value> {
+    let current = env!("CARGO_PKG_VERSION");
+    match check_latest_version().await {
+        Ok(Some(latest)) if latest != current => {
+            let download_url = format!(
+                "https://gitee.com/forgemaster/forge-shell/releases/download/v{0}/forge-shell.exe",
+                latest
+            );
+
+            // 找到当前 exe 路径
+            let current_exe = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("找不到当前程序: {}", e)})),
+            };
+
+            let new_exe = current_exe.with_file_name(format!("forge-shell-v{}.exe", latest));
+            let backup_exe = current_exe.with_extension("exe.old");
+
+            // 下载新版本
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("创建下载客户端失败: {}", e)})),
+            };
+
+            match client.get(&download_url).send().await {
+                Ok(resp) => {
+                    match resp.bytes().await {
+                        Ok(bytes) => {
+                            // 写到临时文件
+                            if let Err(e) = std::fs::write(&new_exe, &bytes) {
+                                return Json(serde_json::json!({"ok": false, "error": format!("写入新版本失败: {}", e)}));
+                            }
+
+                            // 备份旧版本
+                            std::fs::rename(&current_exe, &backup_exe).ok();
+
+                            // 替换为新版本
+                            if let Err(e) = std::fs::rename(&new_exe, &current_exe) {
+                                // 恢复旧版本
+                                std::fs::rename(&backup_exe, &current_exe).ok();
+                                return Json(serde_json::json!({"ok": false, "error": format!("替换失败: {}", e)}));
+                            }
+
+                            // 启动新进程并退出当前进程
+                            let _ = std::process::Command::new(&current_exe)
+                                .arg("--web")
+                                .spawn();
+
+                            // 延迟退出，让响应先发出去
+                            tokio::spawn(async {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                std::process::exit(0);
+                            });
+
+                            Json(serde_json::json!({"ok": true, "message": format!("已更新到 v{}，正在重启...", latest)}))
+                        }
+                        Err(e) => Json(serde_json::json!({"ok": false, "error": format!("下载失败: {}", e)})),
+                    }
+                }
+                Err(e) => Json(serde_json::json!({"ok": false, "error": format!("请求失败: {}", e)})),
+            }
+        }
+        _ => Json(serde_json::json!({"ok": false, "error": "已是最新版本"})),
+    }
+}
+
 /// 检查更新
 pub async fn update_check_handler() -> Json<serde_json::Value> {
     let current = env!("CARGO_PKG_VERSION");

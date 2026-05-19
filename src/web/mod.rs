@@ -66,6 +66,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/ping", get(api::ping_handler))
         .route("/api/evolution", get(api::evolution_handler))
         .route("/api/update-check", get(api::update_check_handler))
+        .route("/api/update-now", axum::routing::post(api::update_now_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
         .route("/api/auto-fix", get(api::auto_fix_handler))
         .route("/api/rollback", axum::routing::post(api::rollback_handler))

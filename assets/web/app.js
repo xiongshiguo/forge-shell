@@ -342,14 +342,70 @@ async function executeTool(tool, arg) {
 
     case 'read':
       try {
-        var resp = await fetch('/api/exec', {
+        var parts = arg.split(':');
+        var path = parts[0].trim();
+        var start = parseInt(parts[1]) || 0;
+        var end = parseInt(parts[2]) || 0;
+        var resp = await fetch('/api/read', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({command: 'type ' + arg, cwd: '.'})
+          body: JSON.stringify({path: path, start: start, end: end})
         });
         var data = await resp.json();
-        addMessage('system', '📄 ' + arg + ':\n' + (data.stdout || data.stderr || '').substring(0, 1000));
-      } catch(e) {}
+        if (data.ok) {
+          addMessage('system', '📄 ' + path + ' (' + data.total_lines + '行):\n' + (data.lines || []).join('\n').substring(0, 2000));
+        } else {
+          addMessage('system', '❌ 读取失败: ' + data.error);
+        }
+      } catch(e) { addMessage('system', '读取异常: ' + e.message); }
+      break;
+
+    case 'search':
+      try {
+        var resp = await fetch('/api/search', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({pattern: arg, path: '.'})
+        });
+        var data = await resp.json();
+        if (data.ok && data.matches.length > 0) {
+          addMessage('system', '🔍 ' + arg + ' (' + data.count + '条):\n' + data.matches.join('\n').substring(0, 2000));
+        } else {
+          addMessage('system', '🔍 ' + arg + ': 无匹配');
+        }
+      } catch(e) { addMessage('system', '搜索异常: ' + e.message); }
+      break;
+
+    case 'web':
+      try {
+        var resp = await fetch('/api/web-search', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({query: arg})
+        });
+        var data = await resp.json();
+        if (data.ok && data.results.length > 0) {
+          addMessage('system', '🌐 搜索: ' + arg + '\n' + data.results.map(function(r,i) { return (i+1) + '. ' + r; }).join('\n').substring(0, 2000));
+        } else {
+          addMessage('system', '🌐 搜索无结果');
+        }
+      } catch(e) { addMessage('system', '联网搜索异常'); }
+      break;
+
+    case 'lsp':
+      try {
+        var resp = await fetch('/api/lsp', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({file: arg || ''})
+        });
+        var data = await resp.json();
+        if (data.ok && data.errors.length > 0) {
+          addMessage('system', '🔬 cargo check (' + data.count + '个错误):\n' + data.errors.map(function(e) { return e.file + ':' + e.line + ' - ' + e.message; }).join('\n').substring(0, 2000));
+        } else {
+          addMessage('system', '🔬 cargo check: 无错误');
+        }
+      } catch(e) { addMessage('system', 'LSP检查异常'); }
       break;
   }
 }

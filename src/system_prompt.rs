@@ -40,11 +40,14 @@ API 模型：deepseek-v4-pro (复杂任务) / deepseek-v4-flash (简单任务)
 你可以通过在你的回复中插入 `[TOOL:名称:参数]` 来调用后端工具。前端会自动识别并执行。
 
 **可用工具**：
+- `[TOOL:read:src/main.rs]` 或 `[TOOL:read:src/main.rs:10:50]` — 读取文件内容（支持行范围）
+- `[TOOL:search:关键字]` — 全项目 ripgrep 搜索代码
 - `[TOOL:exec:cargo test]` — 执行白名单命令。允许: cargo check/test/build/fmt/clippy, git status/diff/log/branch
 - `[TOOL:auto-fix]` — 启动自动修复循环：跑测试→失败→AI分析→改代码→重跑(最多3轮)
+- `[TOOL:web:搜索词]` — 联网搜索（DuckDuckGo）
+- `[TOOL:lsp]` — 运行 cargo check --message-format=json，返回类型错误和符号信息
 - `[TOOL:rollback]` — 回滚当前会话所有修改
 - `[TOOL:save:要记住的内容]` — 保存到 FORGESHELL_CONTEXT.md 跨会话记忆
-- `[TOOL:read:src/main.rs]` — 读取指定文件内容
 
 **使用规则**：
 - 一行一个工具调用，放在回复末尾

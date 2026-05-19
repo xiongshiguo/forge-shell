@@ -488,6 +488,139 @@ async fn apply_fix_code(fix_code: &str, work_dir: &Path, state: &SharedState) ->
     count
 }
 
+/// 读取文件内容（支持行范围）
+pub async fn read_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = req["path"].as_str().unwrap_or("");
+    let start = req["start"].as_u64().unwrap_or(0) as usize;
+    let end = req["end"].as_u64().unwrap_or(0) as usize;
+
+    let full_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path);
+
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let total = lines.len();
+            let (s, e) = if end > 0 && end > start {
+                (start.min(total).saturating_sub(1), end.min(total))
+            } else {
+                (0, total)
+            };
+            let selected: Vec<_> = lines[s..e].iter().enumerate().map(|(i, l)| format!("{:>5}  {}", s+i+1, l)).collect();
+            Json(serde_json::json!({"ok": true, "path": path, "total_lines": total, "lines": selected}))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// 联网搜索
+pub async fn web_search_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let query = req["query"].as_str().unwrap_or("");
+    if query.is_empty() {
+        return Json(serde_json::json!({"ok": false, "results": []}));
+    }
+
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
+        Ok(c) => c,
+        Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    };
+
+    // 用 DuckDuckGo Lite 搜索（无需 API Key）
+    let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(&query));
+    match client.get(&url).header("User-Agent", "Mozilla/5.0").send().await {
+        Ok(resp) => {
+            let html = resp.text().await.unwrap_or_default();
+            let snippets: Vec<&str> = html
+                .split("result__snippet")
+                .skip(1)
+                .filter_map(|s| s.split("</").next())
+                .map(|s| s.trim_start_matches('>').trim())
+                .filter(|s| s.len() > 10)
+                .take(8)
+                .collect();
+            Json(serde_json::json!({"ok": true, "results": snippets}))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+fn urlencoding(s: &str) -> String {
+    s.chars().map(|c| {
+        if c.is_alphanumeric() || c == ' ' { c.to_string() } else { format!("%{:02X}", c as u8) }
+    }).collect::<String>().replace(' ', "+")
+}
+
+/// LSP 信息：运行 cargo check 并解析错误
+pub async fn lsp_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let file_path = req["file"].as_str().unwrap_or("");
+
+    let work_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let output = match tokio::process::Command::new("cmd")
+        .args(["/C", "cargo check --message-format=json 2>&1"])
+        .current_dir(&work_dir)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let errors: Vec<serde_json::Value> = stdout.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|msg| msg["reason"].as_str() == Some("compiler-message"))
+        .filter_map(|msg| {
+            let m = &msg["message"];
+            if m["level"].as_str() == Some("error") {
+                let spans = &m["spans"];
+                Some(serde_json::json!({
+                    "message": m["message"],
+                    "file": spans[0]["file_name"],
+                    "line": spans[0]["line_start"],
+                    "column": spans[0]["column_start"],
+                }))
+            } else { None }
+        })
+        .take(10)
+        .collect();
+
+    Json(serde_json::json!({"ok": true, "errors": errors, "count": errors.len()}))
+}
+
+/// 搜索代码（ripgrep）
+pub async fn search_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let pattern = req["pattern"].as_str().unwrap_or("");
+    let path = req["path"].as_str().unwrap_or(".");
+
+    if pattern.is_empty() {
+        return Json(serde_json::json!({"ok": false, "matches": []}));
+    }
+
+    let work_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let search_path = work_dir.join(path);
+
+    match tokio::process::Command::new("rg")
+        .args(["--no-heading", "-n", "--max-count=50", pattern])
+        .arg(&search_path)
+        .output()
+        .await
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let matches: Vec<&str> = stdout.lines().take(20).collect();
+            Json(serde_json::json!({"ok": true, "matches": matches, "count": matches.len()}))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string(), "matches": []})),
+    }
+}
+
 /// 执行沙箱命令（cargo check/test/build 等白名单命令）
 pub async fn exec_handler(
     State(state): State<SharedState>,

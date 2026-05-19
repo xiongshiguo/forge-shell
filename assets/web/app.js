@@ -182,13 +182,98 @@ function handleSSE(data) {
     document.getElementById('streaming').textContent = '';
     addMessage('system', '❌ ' + data.message);
   } else if (data.type === 'plan') {
-    addMessage('system', `拆解为 ${data.tasks} 个子任务，${data.groups} 组并行（增益 ${data.gain.toFixed(1)}x）`);
+    addMessage('system', '拆解为 ' + data.tasks + ' 个子任务，' + data.groups + ' 组并行（增益 ' + data.gain.toFixed(1) + 'x）');
   } else if (data.type === 'chunk') {
     document.getElementById('streaming').textContent += data.content;
   } else if (data.type === 'done') {
-    const text = document.getElementById('streaming').textContent;
+    var text = document.getElementById('streaming').textContent;
     document.getElementById('streaming').textContent = '';
-    if (text) addMessage('assistant', text);
+    if (text) {
+      addMessage('assistant', text);
+      parseToolCalls(text);
+    }
+  }
+}
+
+// 解析 AI 回复中的工具调用
+function parseToolCalls(text) {
+  var lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (line.startsWith('[TOOL:')) {
+      var match = line.match(/\[TOOL:(\w+)(?::(.*))?\]/);
+      if (match) {
+        var tool = match[1];
+        var arg = match[2] || '';
+        executeTool(tool, arg);
+      }
+    }
+  }
+}
+
+async function executeTool(tool, arg) {
+  switch (tool) {
+    case 'exec':
+      addMessage('system', '🔧 执行: ' + arg + '...');
+      try {
+        var resp = await fetch('/api/exec', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({command: arg, cwd: '.'})
+        });
+        var data = await resp.json();
+        if (data.ok) {
+          addMessage('system', '✓ ' + arg + ' 通过\n' + (data.stdout || '').substring(0, 500));
+        } else {
+          addMessage('system', '✗ ' + arg + ' 失败\n' + (data.stderr || data.stdout || '').substring(0, 1000));
+        }
+      } catch(e) { addMessage('system', '执行异常: ' + e.message); }
+      break;
+
+    case 'auto-fix':
+      addMessage('system', '🔧 启动自动修复循环...');
+      var eventSource = new EventSource('/api/auto-fix');
+      eventSource.onmessage = function(evt) {
+        try {
+          var d = JSON.parse(evt.data);
+          if (d.type === 'chunk') addMessage('system', d.content);
+          if (d.type === 'done') { addMessage('system', d.message); eventSource.close(); }
+          if (d.type === 'error') { addMessage('system', '❌ ' + d.message); eventSource.close(); }
+        } catch(e) {}
+      };
+      break;
+
+    case 'rollback':
+      try {
+        var resp = await fetch('/api/rollback', {method: 'POST'});
+        var data = await resp.json();
+        addMessage('system', '已回滚 ' + data.rolled_back + ' 个文件');
+      } catch(e) { addMessage('system', '回滚失败: ' + e.message); }
+      break;
+
+    case 'save':
+      try {
+        var resp = await fetch('/api/save-context', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({content: arg})
+        });
+        var data = await resp.json();
+        addMessage('system', data.ok ? '已保存记忆' : '保存失败');
+      } catch(e) { addMessage('system', '保存异常: ' + e.message); }
+      break;
+
+    case 'read':
+      try {
+        var resp = await fetch('/api/exec', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({command: 'type ' + arg, cwd: '.'})
+        });
+        var data = await resp.json();
+        addMessage('system', '📄 ' + arg + ':\n' + (data.stdout || data.stderr || '').substring(0, 1000));
+      } catch(e) {}
+      break;
   }
 }
 

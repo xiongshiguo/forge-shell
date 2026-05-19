@@ -4,6 +4,7 @@ use super::SharedState;
 use crate::agent::dispatcher::Dispatcher;
 use crate::config::Config;
 use axum::{Json, extract::State, response::sse::{Event, Sse, KeepAlive}};
+use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -137,6 +138,15 @@ pub async fn evolution_handler(
     }))
 }
 
+/// 回滚所有修改
+pub async fn rollback_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let backup = state.backup.lock().await;
+    let count = backup.rollback_all();
+    Json(serde_json::json!({"ok": true, "rolled_back": count}))
+}
+
 /// 保存跨会话记忆
 pub async fn save_context_handler(
     Json(req): Json<serde_json::Value>,
@@ -213,6 +223,111 @@ pub async fn setup_handler(
     } else {
         Json(SetupResponse { success: false, message: "配置序列化失败".into() })
     }
+}
+
+/// 自动修复循环：跑测试 → 失败 → AI 分析 → 改代码 → 重跑 (最多3轮)
+pub async fn auto_fix_handler(
+    State(state): State<SharedState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let state_clone = state.clone();
+
+    tokio::spawn(async move {
+        let work_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let config = state_clone.config.lock().await.clone();
+        let client = match crate::engine::inference::InferenceClient::new(&config) {
+            Ok(c) => c,
+            Err(e) => { let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"error","message":e.to_string()}).to_string()))); return; }
+        };
+
+        for round in 0..3u32 {
+            let msg = format!("\n🔄 第{}轮：运行 cargo test...\n", round+1);
+            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg}).to_string())));
+
+            let output = match tokio::process::Command::new("cmd").args(["/C", "cargo test"]).current_dir(&work_dir).output().await {
+                Ok(o) => o,
+                Err(e) => { let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"error","message":e.to_string()}).to_string()))); return; }
+            };
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if output.status.success() {
+                let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"done","message":"✓ 全部测试通过！"}).to_string())));
+                return;
+            }
+
+            // 截取关键错误信息（最后 2000 字符）
+            let error_text = if stderr.len() > 2000 { &stderr[stderr.len()-2000..] } else { &stderr };
+            let msg2 = format!("❌ 测试失败:\n{}\n\n🤔 分析错误并生成修复...\n", error_text);
+            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg2}).to_string())));
+
+            let fix_prompt = format!(
+                "以下 cargo test 失败:\n{}\n\n请直接给出修复代码，用 ```rust:文件路径 包裹，例如：\n```rust:src/main.rs\n修复后的代码\n```\n只输出需要修改的文件，不要解释。",
+                error_text
+            );
+
+            let messages = vec![
+                crate::engine::inference::ChatMessage::system("你是代码修复专家。只输出修复后的完整文件内容，用```rust:路径 格式。不要解释。"),
+                crate::engine::inference::ChatMessage::user(&fix_prompt),
+            ];
+
+            match client.chat_stream(messages).await {
+                Ok(mut stream) => {
+                    use futures::StreamExt;
+                    let mut fix_code = String::new();
+                    while let Some(r) = stream.next().await {
+                        if let Ok(c) = r { fix_code.push_str(&c.content); }
+                    }
+
+                    // 解析并应用修复
+                    let applied = apply_fix_code(&fix_code, &work_dir, &state_clone).await;
+                    let msg = format!("\n📝 已应用 {} 个文件修改\n", applied);
+                    let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg}).to_string())));
+
+                }
+                Err(e) => {
+                    let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"error","message":format!("AI 调用失败: {}", e)}).to_string())));
+                    return;
+                }
+            }
+        }
+
+        let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"done","message":"⚠ 3轮自动修复后仍有失败，请手动检查"}).to_string())));
+    });
+
+    Sse::new(UnboundedReceiverStream::new(rx)).keep_alive(KeepAlive::default())
+}
+
+async fn apply_fix_code(fix_code: &str, work_dir: &Path, state: &SharedState) -> usize {
+    let mut count = 0;
+    let mut current_path: Option<String> = None;
+    let mut current_code = String::new();
+
+    for line in fix_code.lines() {
+        if line.starts_with("```rust:") {
+            if let Some(path) = &current_path {
+                let full_path = work_dir.join(path);
+                let _ = state.backup.lock().await.backup_before_write(&full_path, "auto-fix");
+                std::fs::write(&full_path, current_code.trim()).ok();
+                count += 1;
+            }
+            current_path = Some(line.trim_start_matches("```rust:").trim().to_string());
+            current_code = String::new();
+        } else if line == "```" {
+            if let Some(path) = &current_path {
+                let full_path = work_dir.join(path);
+                let _ = state.backup.lock().await.backup_before_write(&full_path, "auto-fix");
+                std::fs::write(&full_path, current_code.trim()).ok();
+                count += 1;
+                current_path = None;
+            }
+        } else if current_path.is_some() {
+            current_code.push_str(line);
+            current_code.push('\n');
+        }
+    }
+    count
 }
 
 /// 执行沙箱命令（cargo check/test/build 等白名单命令）

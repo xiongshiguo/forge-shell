@@ -8,6 +8,7 @@ pub mod static_files;
 use crate::config::Config;
 use crate::agent::orchestrator::Orchestrator;
 use crate::engine::context::ContextManager;
+use crate::engine::tools::backup::BackupManager;
 use crate::evolution::EvolutionCoordinator;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub active_agents: Mutex<usize>,
     pub has_api_key: bool,
     pub evolution: Mutex<EvolutionCoordinator>,
+    pub backup: Mutex<BackupManager>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -48,6 +50,9 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         evolution: Mutex::new(EvolutionCoordinator::new(
             crate::config::forge_data_dir().join("evolution")
         )),
+        backup: Mutex::new(BackupManager::new(
+            crate::config::forge_data_dir().join("backups")
+        )),
     });
 
     let app = Router::new()
@@ -62,6 +67,8 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/evolution", get(api::evolution_handler))
         .route("/api/update-check", get(api::update_check_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
+        .route("/api/auto-fix", get(api::auto_fix_handler))
+        .route("/api/rollback", axum::routing::post(api::rollback_handler))
         .route("/api/save-context", axum::routing::post(api::save_context_handler))
         // 静态文件
         .route("/", get(static_files::index_html))

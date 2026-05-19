@@ -6,6 +6,7 @@
 //! - Git 操作仅允许安全子集
 //! - 写入操作先备份
 
+pub mod backup;
 mod sandbox;
 
 pub use sandbox::Sandbox;

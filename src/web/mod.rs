@@ -62,6 +62,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/evolution", get(api::evolution_handler))
         .route("/api/update-check", get(api::update_check_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
+        .route("/api/save-context", axum::routing::post(api::save_context_handler))
         // 静态文件
         .route("/", get(static_files::index_html))
         .route("/style.css", get(static_files::style_css))

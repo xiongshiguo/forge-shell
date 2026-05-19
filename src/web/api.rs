@@ -137,6 +137,36 @@ pub async fn evolution_handler(
     }))
 }
 
+/// 保存跨会话记忆
+pub async fn save_context_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let content = req["content"].as_str().unwrap_or("");
+    let path = context_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    match std::fs::write(&path, content) {
+        Ok(_) => Json(serde_json::json!({"ok": true, "path": path.to_string_lossy()})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+fn context_file_path() -> std::path::PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("FORGESHELL_CONTEXT.md")
+}
+
+fn load_context() -> String {
+    let path = context_file_path();
+    if path.exists() {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
 /// 检查是否已配置 API Key（动态读取，不依赖启动时快照）
 pub async fn check_key_handler(
     State(state): State<SharedState>,
@@ -298,8 +328,16 @@ pub async fn chat_handler(
             }
         };
 
+        // 加载跨会话上下文
+        let context = load_context();
+        let system_msg = if context.is_empty() {
+            crate::system_prompt::SYSTEM_PROMPT.to_string()
+        } else {
+            format!("{}\n\n## 跨会话记忆\n以下是之前会话中你记住的重要内容：\n{}", crate::system_prompt::SYSTEM_PROMPT, context)
+        };
+
         let messages = vec![
-            crate::engine::inference::ChatMessage::system(crate::system_prompt::SYSTEM_PROMPT),
+            crate::engine::inference::ChatMessage::system(&system_msg),
             crate::engine::inference::ChatMessage::user(&req.message),
         ];
 

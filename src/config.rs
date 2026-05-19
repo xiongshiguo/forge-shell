@@ -58,7 +58,7 @@ fn default_model() -> String {
     "deepseek-chat".into()
 }
 fn default_flash_model() -> String {
-    "deepseek-v4-flash".into()
+    "deepseek-chat".into()
 }
 fn default_api_base() -> String {
     "https://api.deepseek.com".into()

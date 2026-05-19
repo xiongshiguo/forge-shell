@@ -89,7 +89,9 @@ function showMainUI() {
   checkUpdate();
   loadStatus();
   loadPanels();
+  loadSidebar();
   setInterval(loadStatus, 3000);
+  setInterval(loadSidebar, 10000);
 }
 
 // ---- 版本检测 ----
@@ -360,6 +362,28 @@ function addMessage(role, text) {
   const messagesEl = document.getElementById('messages');
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// ---- 左侧栏 ----
+async function loadSidebar() {
+  try {
+    var statusResp = await fetch('/api/status');
+    var status = await statusResp.json();
+    if (status.evolution) {
+      document.getElementById('evo-stats').innerHTML =
+        '经验: ' + status.evolution.experiences + ' | SOP: ' + status.evolution.sops +
+        ' | 成功率: ' + (status.evolution.success_rate * 100).toFixed(0) + '%';
+    }
+    var evoResp = await fetch('/api/evolution');
+    var evo = await evoResp.json();
+    if (evo.sops && evo.sops.length > 0) {
+      var html = '';
+      evo.sops.forEach(function(s) {
+        html += '<div style="margin:4px 0;color:var(--text-dim)">' + s.title.substring(0, 20) + ' (' + s.usage_count + '次)</div>';
+      });
+      document.getElementById('conversation-list').innerHTML = html || '暂无历史';
+    }
+  } catch(e) {}
 }
 
 // ---- 状态刷新 ----

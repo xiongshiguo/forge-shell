@@ -85,6 +85,7 @@ function showMainUI() {
   setupPanelTabs();
   setupSend();
   addMessage('system', '🔥 熔炉已就绪。输入指令开始编程。');
+  setupReview();
   checkUpdate();
   loadStatus();
   loadPanels();
@@ -101,6 +102,54 @@ async function checkUpdate() {
       addUpdateMessage(msg, data.latest);
     }
   } catch(e) {}
+}
+
+// ---- 复盘弹窗 ----
+function setupReview() {
+  var modal = document.getElementById('review-modal');
+  document.getElementById('session-end-btn').addEventListener('click', showReview);
+  window.addEventListener('beforeunload', function(e) { /* 无法拦截关闭，但检查是否有未复盘数据 */ });
+
+  document.getElementById('review-submit-btn').addEventListener('click', submitReview);
+  document.getElementById('review-skip-btn').addEventListener('click', function() { modal.style.display = 'none'; });
+}
+
+function showReview() {
+  var modal = document.getElementById('review-modal');
+  var preview = document.getElementById('review-preview');
+  var msgs = document.querySelectorAll('#messages .message');
+  var turns = 0;
+  var sample = [];
+  msgs.forEach(function(m) {
+    if (m.classList.contains('user') || m.classList.contains('assistant')) turns++;
+    if (sample.length < 3) sample.push((m.textContent || '').substring(0, 80));
+  });
+  preview.innerHTML = '<div style="margin-bottom:8px">对话轮次: ' + Math.floor(turns/2) + '</div>' +
+    '<div style="margin-bottom:8px">策略摘要: ' + sample.join(' | ') + '...</div>' +
+    '<div style="color:var(--green)">不上传任何代码、路径、Key</div>';
+  modal.style.display = 'flex';
+}
+
+async function submitReview() {
+  var modal = document.getElementById('review-modal');
+  var msgs = document.querySelectorAll('#messages .message');
+  var turns = [];
+  msgs.forEach(function(m) {
+    if (m.classList.contains('user') || m.classList.contains('system')) {
+      turns.push(m.textContent.substring(0, 100));
+    }
+  });
+  try {
+    var resp = await fetch('/api/review/submit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({turns: turns, project: document.title || ''})
+    });
+    var data = await resp.json();
+    document.getElementById('review-msg').textContent = data.ok ? '✅ 复盘已提交到经验熔池' : '提交失败';
+    document.getElementById('review-msg').style.color = data.ok ? 'var(--green)' : 'var(--red)';
+    if (data.ok) setTimeout(function() { modal.style.display = 'none'; }, 1000);
+  } catch(e) { document.getElementById('review-msg').textContent = '网络错误'; }
 }
 
 function addUpdateMessage(text, version) {

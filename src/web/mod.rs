@@ -71,6 +71,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/auto-fix", get(api::auto_fix_handler))
         .route("/api/rollback", axum::routing::post(api::rollback_handler))
         .route("/api/save-context", axum::routing::post(api::save_context_handler))
+        .route("/api/review/submit", axum::routing::post(api::review_submit_handler))
         // 静态文件
         .route("/", get(static_files::index_html))
         .route("/style.css", get(static_files::style_css))

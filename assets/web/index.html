@@ -27,7 +27,9 @@
   <header id="topbar">
     <span class="logo">🔥 熔炉</span>
     <span id="topbar-cost">💰 ¥0.0000 | 94%</span>
-  </header>
+    <span id="topbar-cost">💰 ¥0.0000 | 94%</span>
+  <button id="session-end-btn" title="结束会话并复盘" style="margin-left:auto;padding:4px 12px;background:var(--purple);color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px">结束</button>
+</header>
   <main id="main">
     <aside id="sidebar">
       <div id="conversation-list"></div>
@@ -54,6 +56,20 @@
     <input id="user-input" type="text" placeholder="输入你的指令…" autofocus>
     <button id="send-btn">发送</button>
   </footer>
+</div>
+
+<div id="review-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:center">
+  <div style="background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:32px;max-width:500px;width:90%">
+    <h3 style="color:var(--gold);margin-bottom:16px">🔍 复盘本次对话</h3>
+    <p style="color:var(--text-dim);margin-bottom:12px;font-size:14px">将匿名策略数据提交到经验熔池，帮助熔炉进化。</p>
+    <div id="review-preview" style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:16px;max-height:200px;overflow-y:auto;font-size:12px;color:var(--text-dim)"></div>
+    <p style="color:var(--red);font-size:11px;margin-bottom:16px">✓ 不上传代码、文件路径、API Key、变量名</p>
+    <div style="display:flex;gap:8px">
+      <button id="review-submit-btn" style="flex:1;padding:10px;background:var(--purple);color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px">提交复盘</button>
+      <button id="review-skip-btn" style="flex:1;padding:10px;background:var(--bg3);color:var(--text);border:none;border-radius:8px;cursor:pointer;font-size:14px">跳过</button>
+    </div>
+    <p id="review-msg" style="margin-top:12px;font-size:13px;text-align:center"></p>
+  </div>
 </div>
 
 <script src="app.js"></script>

@@ -208,6 +208,52 @@ pub async fn evolution_handler(
     }))
 }
 
+/// 提交复盘到经验熔池
+pub async fn review_submit_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let turns: Vec<String> = req["turns"].as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let project = req["project"].as_str().unwrap_or("");
+
+    let review_id = uuid::Uuid::new_v4().to_string();
+    let review = serde_json::json!({
+        "id": review_id,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "turns": turns.len(),
+        "project": project,
+        "patterns": extract_patterns(&turns),
+    });
+
+    let review_dir = crate::config::forge_data_dir().join("reviews");
+    std::fs::create_dir_all(&review_dir).ok();
+    if let Ok(json) = serde_json::to_string_pretty(&review) {
+        std::fs::write(review_dir.join(format!("review_{}.json", &review_id[..8])), json).ok();
+    }
+
+    // 记录到进化引擎
+    {
+        let mut evo = state.evolution.lock().await;
+        let summary: String = turns.iter().take(3).map(|t| t.chars().take(50).collect::<String>()).collect::<Vec<_>>().join(" | ");
+        evo.record_turn(&summary, "session_review", true);
+    }
+
+    Json(serde_json::json!({"ok": true, "id": review_id}))
+}
+
+fn extract_patterns(turns: &[String]) -> Vec<String> {
+    let keywords = ["rust", "修复", "重构", "测试", "编译", "部署", "性能", "api"];
+    let mut patterns = Vec::new();
+    for kw in keywords {
+        if turns.iter().any(|t| t.to_lowercase().contains(kw)) {
+            patterns.push(kw.to_string());
+        }
+    }
+    patterns
+}
+
 /// 回滚所有修改
 pub async fn rollback_handler(
     State(state): State<SharedState>,

@@ -169,6 +169,21 @@ function parseToolCalls(text) {
   }
 }
 
+async function callApiWithRetry(url, body, retries) {
+  retries = retries || 2;
+  for (var i = 0; i < retries; i++) {
+    try {
+      var resp = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) });
+      var data = await resp.json();
+      if (data.ok !== false || i === retries - 1) return data;
+      if (i < retries - 1) await new Promise(function(r) { setTimeout(r, 300); });
+    } catch(e) {
+      if (i === retries - 1) throw e;
+      await new Promise(function(r) { setTimeout(r, 500); });
+    }
+  }
+}
+
 async function executeTool(tool, arg) {
   switch(tool) {
     case 'exec':

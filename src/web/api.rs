@@ -360,6 +360,36 @@ fn load_context() -> String {
     }
 }
 
+/// API 调用重试包装器（最多 2 次，指数退避）
+async fn call_with_repair(
+    client: &mut crate::engine::inference::InferenceClient,
+    messages: Vec<crate::engine::inference::ChatMessage>,
+) -> Result<(String, bool), String> {
+    for attempt in 0u32..2 {
+        match client.chat_stream(messages.clone()).await {
+            Ok(mut stream) => {
+                use futures::StreamExt;
+                let mut text = String::new();
+                while let Some(r) = stream.next().await {
+                    match r {
+                        Ok(c) => text.push_str(&c.content),
+                        Err(e) => if attempt == 0 { break; } else { return Err(e.to_string()); },
+                    }
+                }
+                return Ok((text, true));
+            }
+            Err(e) => {
+                if attempt == 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                } else {
+                    return Err(e.to_string());
+                }
+            }
+        }
+    }
+    Err("重试耗尽".into())
+}
+
 /// 检查是否已配置 API Key（动态读取，不依赖启动时快照）
 pub async fn check_key_handler(
     State(state): State<SharedState>,
@@ -457,11 +487,9 @@ pub async fn auto_fix_handler(
                     crate::engine::inference::ChatMessage::system("你是 Rust 编译器专家。分析测试失败的根本原因。"),
                     crate::engine::inference::ChatMessage::user(&root_cause_prompt),
                 ];
-                if let Ok(mut stream) = client.chat_stream(msgs).await {
-                    use futures::StreamExt;
-                    while let Some(r) = stream.next().await {
-                        if let Ok(c) = r { root_cause.push_str(&c.content); }
-                    }
+                match call_with_repair(&mut client, msgs).await {
+                    Ok((text, _)) => root_cause = text,
+                    Err(e) => { let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": format!("根因分析失败: {}", e)}).to_string()))); },
                 }
             }
             let msg_rc = format!("根因: {}\n\n🔧 生成修复方案...\n", root_cause);
@@ -1250,25 +1278,20 @@ pub async fn chat_handler(
                             handles.push(tokio::spawn(async move {
                                 let mut client = match crate::engine::inference::InferenceClient::new(&task_config) {
                                     Ok(c) => c,
-                                    Err(e) => return format!("[{}] 错误: {}", task_id, e),
+                                    Err(e) => return format!("[{}] 创建失败: {}", task_id, e),
                                 };
                                 let msgs = vec![
                                     crate::engine::inference::ChatMessage::system(&system_msg),
                                     crate::engine::inference::ChatMessage::user(&format!("执行子任务: {}", task_desc)),
                                 ];
-                                match client.chat_stream(msgs).await {
-                                    Ok(mut stream) => {
-                                        use futures::StreamExt;
-                                        let mut text = String::new();
-                                        while let Some(r) = stream.next().await {
-                                            if let Ok(c) = r { text.push_str(&c.content); }
-                                        }
+                                match call_with_repair(&mut client, msgs).await {
+                                    Ok((text, _)) => {
                                         let _ = tx.send(Ok(Event::default().data(
                                             serde_json::json!({"type": "chunk", "content": format!("\n✅ [{}] {}\n", task_id, text)}).to_string()
                                         )));
                                         text
                                     }
-                                    Err(e) => format!("[{}] 失败: {}", task_id, e),
+                                    Err(e) => format!("[{}] 失败(重试后): {}", task_id, e),
                                 }
                             }));
                         }

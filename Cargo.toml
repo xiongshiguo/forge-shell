@@ -1,6 +1,6 @@
 [package]
 name = "forge-shell"
-version = "0.11.3"
+version = "0.12.0"
 edition = "2024"
 description = "熔炉 (ForgeShell) — 以意为炉，以语为锤，铸代码之剑"
 license = "AGPL-3.0"

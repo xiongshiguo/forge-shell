@@ -1165,17 +1165,31 @@ pub async fn chat_handler(
     tokio::spawn(async move {
         let mut config = state_clone.config.lock().await.clone();
 
-        // 模型路由：根据意图复杂度动态选择模型
+        // 模型路由：模式 × 复杂度 动态选择模型
+        let mode = req.mode.as_deref().unwrap_or("assist");
         let router = crate::engine::router::ModelRouter::new(
             config.ai.default_model.clone(),
             config.ai.flash_model.clone(),
         );
-        let decision = router.decide(&req.message, 0);
+        let mut decision = router.decide(&req.message, 0);
+
+        // 模式覆盖：规划强制Pro，极速强制Flash，助手自动
+        match mode {
+            "plan" => {
+                decision.model = config.ai.default_model.clone();
+                decision.estimated_cost *= 1.5;
+            }
+            "speed" => {
+                decision.model = config.ai.flash_model.clone();
+                decision.estimated_cost *= 0.3;
+            }
+            _ => {} // 助手模式：自动
+        }
         config.ai.default_model = decision.model.clone();
 
-        let emoji = if matches!(decision.complexity, crate::engine::router::Complexity::Simple) { "⚡" } else { "🧠" };
+        let label = match mode { "plan" => "📋规划", "speed" => "⚡极速", _ => if matches!(decision.complexity, crate::engine::router::Complexity::Simple) { "⚡自动" } else { "🧠自动" } };
         let _ = tx.send(Ok(Event::default().data(
-            serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}复杂度，预计¥{:.4})", decision.model, emoji, decision.complexity.name(), decision.estimated_cost)}).to_string()
+            serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}模式，预计¥{:.4})", decision.model, label, mode, decision.estimated_cost)}).to_string()
         )));
         // 稳定提示词——不动一个字，让 DeepSeek Prefix Cache 生效
         let system_msg = crate::system_prompt::get_system_prompt();

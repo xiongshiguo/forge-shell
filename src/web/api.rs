@@ -1019,6 +1019,94 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}复杂度，预计¥{:.4})", decision.model, emoji, decision.complexity.name(), decision.estimated_cost)}).to_string()
         )));
+        // 加载项目上下文（子任务路由和普通路由都需要）
+        let context = load_context();
+        let project_info = scan_project();
+        let mut system_msg = crate::system_prompt::get_system_prompt();
+        system_msg.push_str(&project_info);
+        if !context.is_empty() {
+            system_msg.push_str(&format!("\n\n## 跨会话记忆\n{}", context));
+        }
+
+        // 子任务级路由：复杂任务拆解，每个子任务独立选模型
+        if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {
+            let oracle = crate::agent::orchestrator::Orchestrator::new(8);
+            let plan = oracle.decompose(&req.message);
+
+            if plan.tasks.len() > 1 {
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "chunk", "content": format!("\n📋 拆解为{}个子任务，并行执行\n", plan.tasks.len())}).to_string()
+                )));
+
+                let mut all_content = String::new();
+                let groups = plan.parallel_groups.clone();
+                let tasks = plan.tasks.clone();
+                for group in groups {
+                    let mut handles = Vec::new();
+                    for task_id in group {
+                        if let Some(task) = tasks.iter().find(|t| t.id == task_id) {
+                            let task_desc = task.description.clone();
+                            let task_model = if task.read_only {
+                                config.ai.flash_model.clone()
+                            } else {
+                                config.ai.default_model.clone()
+                            };
+                            let mut task_config = config.clone();
+                            task_config.ai.default_model = task_model;
+                            let tx = tx.clone();
+                            let system_msg = system_msg.clone();
+
+                            handles.push(tokio::spawn(async move {
+                                let client = match crate::engine::inference::InferenceClient::new(&task_config) {
+                                    Ok(c) => c,
+                                    Err(e) => return format!("[{}] 错误: {}", task_id, e),
+                                };
+                                let msgs = vec![
+                                    crate::engine::inference::ChatMessage::system(&system_msg),
+                                    crate::engine::inference::ChatMessage::user(&format!("执行子任务: {}", task_desc)),
+                                ];
+                                match client.chat_stream(msgs).await {
+                                    Ok(mut stream) => {
+                                        use futures::StreamExt;
+                                        let mut text = String::new();
+                                        while let Some(r) = stream.next().await {
+                                            if let Ok(c) = r { text.push_str(&c.content); }
+                                        }
+                                        let _ = tx.send(Ok(Event::default().data(
+                                            serde_json::json!({"type": "chunk", "content": format!("\n✅ [{}] {}\n", task_id, text)}).to_string()
+                                        )));
+                                        text
+                                    }
+                                    Err(e) => format!("[{}] 失败: {}", task_id, e),
+                                }
+                            }));
+                        }
+                    }
+
+                    for h in handles {
+                        if let Ok(r) = h.await { all_content.push_str(&r); all_content.push('\n'); }
+                    }
+                }
+
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "done", "finish_reason": "subtask_merge"}).to_string()
+                )));
+
+                // 记录经验
+                let evo_cost = all_content.len() as f64 * 0.000001;
+                {
+                    let mut cost = state_clone.total_cost.lock().await;
+                    *cost += evo_cost;
+                }
+                {
+                    let mut evo = state_clone.evolution.lock().await;
+                    evo.record_turn(&req.message, &all_content, !all_content.is_empty());
+                    evo.try_reflect();
+                }
+                return;
+            }
+        }
+
         let client = match crate::engine::inference::InferenceClient::new(&config) {
             Ok(c) => c,
             Err(e) => {
@@ -1028,15 +1116,6 @@ pub async fn chat_handler(
                 return;
             }
         };
-
-        // 加载项目上下文 + 跨会话记忆
-        let context = load_context();
-        let project_info = scan_project();
-        let mut system_msg = crate::system_prompt::get_system_prompt();
-        system_msg.push_str(&project_info);
-        if !context.is_empty() {
-            system_msg.push_str(&format!("\n\n## 跨会话记忆\n{}", context));
-        }
 
         let messages = vec![
             crate::engine::inference::ChatMessage::system(&system_msg),

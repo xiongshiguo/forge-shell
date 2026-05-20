@@ -6,3 +6,4 @@ pub mod memory;
 pub mod router;
 pub mod mcp;
 pub mod ast_parser;
+pub mod semantic_index;

@@ -4,6 +4,7 @@ use super::SharedState;
 use crate::agent::dispatcher::Dispatcher;
 use crate::config::Config;
 use axum::{Json, extract::State, response::sse::{Event, Sse, KeepAlive}};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -868,6 +869,29 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// 语义索引查询
+pub async fn semantic_handler(
+    State(state): State<SharedState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let query = params.get("q").map(|s| s.as_str()).unwrap_or("");
+    let kind = params.get("kind").map(|s| s.as_str()).unwrap_or("");
+
+    let results: Vec<_> = if !query.is_empty() {
+        state.semantic_index.fuzzy_search(query).into_iter().map(|e| {
+            serde_json::json!({"name":e.name,"kind":e.kind,"file":e.file,"line":e.line,"sig":e.signature})
+        }).take(30).collect()
+    } else if !kind.is_empty() {
+        state.semantic_index.query_by_kind(kind).into_iter().map(|e| {
+            serde_json::json!({"name":e.name,"kind":e.kind,"file":e.file,"line":e.line,"sig":e.signature})
+        }).take(30).collect()
+    } else {
+        vec![]
+    };
+
+    Json(serde_json::json!({"ok": true, "total": state.semantic_index.len(), "results": results}))
+}
+
 /// 缓存监控仪表盘
 pub async fn cache_monitor_handler(
     State(state): State<SharedState>,
@@ -1297,6 +1321,70 @@ pub async fn chat_handler(
         } else { String::new() };
 
         let user_msg = format!("{}{}{}{}", req.message, project_info, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
+
+        // 复杂任务：双模型辩论制（Pro 主攻 + Flash 审查）
+        if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type":"chunk","content":"\n⚔️ 启动双模型辩论…\n"}).to_string()
+            )));
+
+            let pro_config = config.clone();
+            let mut flash_config = config.clone();
+            flash_config.ai.default_model = flash_config.ai.flash_model.clone();
+
+            let debate_msg = req.message.clone();
+            let debate_msg2 = req.message.clone();
+            let debate_sys = system_msg.clone();
+
+            // Pro 和 Flash 并行
+            let (pro_handle, flash_handle) = tokio::join!(
+                tokio::spawn(async move {
+                    let mut client = match crate::engine::inference::InferenceClient::new(&pro_config) {
+                        Ok(c) => c, Err(_) => return String::new(),
+                    };
+                    let msgs = vec![
+                        crate::engine::inference::ChatMessage::system(&debate_sys),
+                        crate::engine::inference::ChatMessage::user(&format!("请给出完整方案: {}", debate_msg)),
+                    ];
+                    let mut text = String::new();
+                    if let Ok(mut stream) = client.chat_stream(msgs).await {
+                        use futures::StreamExt;
+                        while let Some(r) = stream.next().await {
+                            if let Ok(c) = r { text.push_str(&c.content); }
+                        }
+                    }
+                    text
+                }),
+                tokio::spawn(async move {
+                    let mut client = match crate::engine::inference::InferenceClient::new(&flash_config) {
+                        Ok(c) => c, Err(_) => return String::new(),
+                    };
+                    let msgs = vec![
+                        crate::engine::inference::ChatMessage::system("你是代码审查专家。快速指出方案的潜在问题、边界case、安全风险。用中文，只挑刺，不夸。"),
+                        crate::engine::inference::ChatMessage::user(&format!("审查这个方案: {}", debate_msg2)),
+                    ];
+                    let mut text = String::new();
+                    if let Ok(mut stream) = client.chat_stream(msgs).await {
+                        use futures::StreamExt;
+                        while let Some(r) = stream.next().await {
+                            if let Ok(c) = r { text.push_str(&c.content); }
+                        }
+                    }
+                    text
+                }),
+            );
+
+            let pro_result = pro_handle.unwrap_or_default();
+            let flash_critique = flash_handle.unwrap_or_default();
+
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type":"chunk","content": format!("\n🧠 Pro方案:\n{}\n\n⚡ Flash审查:\n{}\n", pro_result, flash_critique)}).to_string()
+            )));
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type":"done","finish_reason": "debate_complete"}).to_string()
+            )));
+            return;
+        }
 
         // 子任务级路由：复杂任务拆解，每个子任务独立选模型
         if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {

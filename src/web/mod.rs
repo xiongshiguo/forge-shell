@@ -60,6 +60,7 @@ pub struct AppState {
     pub session_summaries: Mutex<Vec<String>>,
     pub evolution: Mutex<EvolutionCoordinator>,
     pub backup: Mutex<BackupManager>,
+    pub semantic_index: crate::engine::semantic_index::SemanticIndex,
     pub rate_limiter: RateLimiter,
 }
 
@@ -92,6 +93,9 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         backup: Mutex::new(BackupManager::new(
             crate::config::forge_data_dir().join("backups")
         )),
+        semantic_index: crate::engine::semantic_index::SemanticIndex::new(
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        ),
         rate_limiter: RateLimiter::new(50), // 每 IP 每分钟 50 次
     });
 
@@ -123,6 +127,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/structure", get(api::structure_handler))
         .route("/api/mcp", axum::routing::post(api::mcp_handler))
         .route("/api/cache-monitor", get(api::cache_monitor_handler))
+        .route("/api/semantic", get(api::semantic_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
         .route("/api/auto-fix", get(api::auto_fix_handler))
         .route("/api/rollback", axum::routing::post(api::rollback_handler))

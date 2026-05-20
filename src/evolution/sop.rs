@@ -22,6 +22,9 @@ pub struct SopEntry {
     pub success_rate: f64,
     /// 来源（reflection/manual）
     pub source: String,
+    /// 数字指纹（防批量抄袭溯源）
+    #[serde(default)]
+    pub fingerprint: Option<String>,
 }
 
 /// SOP 操作步骤
@@ -63,8 +66,17 @@ impl SopLibrary {
         lib
     }
 
-    /// 添加 SOP
-    pub fn add(&mut self, sop: SopEntry) {
+    /// 添加 SOP（自动注入数字指纹）
+    pub fn add(&mut self, mut sop: SopEntry) {
+        // 注入数字指纹：SOP 内容 + 来源 + 时间戳的哈希，防批量抄袭可溯源
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut h = DefaultHasher::new();
+        sop.title.hash(&mut h);
+        sop.description.hash(&mut h);
+        sop.created_at.to_rfc3339().hash(&mut h);
+        sop.fingerprint = Some(format!("forge-sop-{:016x}", h.finish()));
+
         for trigger in &sop.triggers {
             let key = trigger.to_lowercase();
             self.keyword_index.entry(key).or_default().push(sop.id.clone());
@@ -194,6 +206,7 @@ mod tests {
             usage_count: 0,
             success_rate: 0.9,
             source: "test".into(),
+            fingerprint: None,
         }
     }
 

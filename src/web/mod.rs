@@ -15,6 +15,36 @@ use tokio::sync::Mutex;
 use axum::{Router, routing::get};
 use tower_http::cors::CorsLayer;
 
+/// 限流计数器
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct RateLimiter {
+    counts: Mutex<HashMap<String, (u64, std::time::Instant)>>,
+    max_per_minute: u64,
+}
+
+impl RateLimiter {
+    fn new(max_per_minute: u64) -> Self {
+        Self { counts: Mutex::new(HashMap::new()), max_per_minute }
+    }
+
+    async fn check(&self, key: &str) -> bool {
+        let mut map = self.counts.lock().await;
+        let now = std::time::Instant::now();
+        let entry = map.entry(key.to_string()).or_insert((0, now));
+        if now.duration_since(entry.1).as_secs() > 60 {
+            *entry = (1, now);
+            true
+        } else if entry.0 >= self.max_per_minute {
+            false
+        } else {
+            entry.0 += 1;
+            true
+        }
+    }
+}
+
 /// Web 应用共享状态
 pub struct AppState {
     pub config: Mutex<Config>,
@@ -26,6 +56,7 @@ pub struct AppState {
     pub has_api_key: bool,
     pub evolution: Mutex<EvolutionCoordinator>,
     pub backup: Mutex<BackupManager>,
+    pub rate_limiter: RateLimiter,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -53,6 +84,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         backup: Mutex::new(BackupManager::new(
             crate::config::forge_data_dir().join("backups")
         )),
+        rate_limiter: RateLimiter::new(50), // 每 IP 每分钟 50 次
     });
 
     let app = Router::new()

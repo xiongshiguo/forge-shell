@@ -59,6 +59,7 @@ impl ReflectionEngine {
                     usage_count: 0,
                     success_rate: pattern.confidence,
                     source: "reflection".into(),
+                    fingerprint: None,
                 };
 
                 sop_lib.add(sop.clone());

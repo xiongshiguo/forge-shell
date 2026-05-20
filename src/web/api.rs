@@ -507,6 +507,80 @@ async fn apply_fix_code(fix_code: &str, work_dir: &Path, state: &SharedState) ->
     count
 }
 
+/// 代码推理：分析函数签名、复杂度、调用关系
+pub async fn infer_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let target = req["target"].as_str().unwrap_or("");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut findings = Vec::new();
+
+    // 1. 搜索函数定义
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &format!("rg -n \"fn {}\" --type rust", target)]).current_dir(&cwd).output().await {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().take(5) {
+            findings.push(format!("📍 定义: {}", line));
+        }
+    }
+
+    // 2. 搜索调用者
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &format!("rg -n \"{}\" --type rust | grep -v \"fn {}\"", target, target)]).current_dir(&cwd).output().await {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let call_count = stdout.lines().count();
+        findings.push(format!("📞 被调用 {} 次", call_count));
+        for line in stdout.lines().take(8) {
+            findings.push(format!("  → {}", line));
+        }
+    }
+
+    // 3. 分析复杂度（简易：计数 match/if/loop/while）
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &format!("rg -c \"match\\|if \\|loop\\|while\\|for \" --type rust | rg \"{}\"", target)]).current_dir(&cwd).output().await {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        findings.push(format!("🔢 复杂度估算: {}", stdout.trim()));
+    }
+
+    // 4. 所属模块
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &format!("rg -l \"fn {}\" --type rust", target)]).current_dir(&cwd).output().await {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let files: Vec<_> = stdout.lines().collect();
+        findings.push(format!("📁 所在文件: {}", files.join(", ")));
+    }
+
+    Json(serde_json::json!({"ok": true, "findings": findings}))
+}
+
+/// 项目结构图
+pub async fn structure_handler() -> Json<serde_json::Value> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut modules: Vec<serde_json::Value> = Vec::new();
+    let _: Vec<String> = Vec::new();
+
+    if cwd.join("Cargo.toml").exists() {
+        // 解析模块树
+        for dir in ["src", "src/agent", "src/engine", "src/web", "src/tui", "src/evolution"] {
+            let path = cwd.join(dir);
+            if path.exists() {
+                let mod_name = dir.trim_start_matches("src/");
+                if let Ok(entries) = std::fs::read_dir(&path) {
+                    let files: Vec<_> = entries.flatten()
+                        .filter_map(|e| {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if n.ends_with(".rs") && n != "mod.rs" { Some(n.trim_end_matches(".rs").to_string()) } else { None }
+                        }).collect();
+                    modules.push(serde_json::json!({"module": mod_name, "files": files}));
+                }
+            }
+        }
+    }
+
+    let summary = format!("{} 个模块，{} 个文件",
+        modules.len(),
+        modules.iter().map(|m| m["files"].as_array().map(|a| a.len()).unwrap_or(0)).sum::<usize>()
+    );
+
+    Json(serde_json::json!({"ok": true, "summary": summary, "modules": modules}))
+}
+
 /// 并行读取多个文件
 pub async fn parallel_handler(
     Json(req): Json<serde_json::Value>,

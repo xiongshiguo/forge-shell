@@ -232,6 +232,19 @@ async function executeTool(tool, arg) {
       });
       break;
 
+    case 'infer':
+      var r = await fetch('/api/infer', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target: arg}) });
+      var d = await r.json();
+      if (d.ok && d.findings.length) addMsg('system', '🔬 推理 ' + arg + ':\n' + d.findings.join('\n'));
+      else addMsg('system', '🔬 未找到 ' + arg);
+      break;
+
+    case 'structure':
+      var r = await fetch('/api/structure');
+      var d = await r.json();
+      if (d.ok) addMsg('system', '🏗 项目结构 (' + d.summary + '):\n' + d.modules.map(function(m) { return '  ' + m.module + '/: ' + (m.files||[]).join(', '); }).join('\n'));
+      break;
+
     case 'explore':
       var r = await fetch('/api/explore');
       var d = await r.json();

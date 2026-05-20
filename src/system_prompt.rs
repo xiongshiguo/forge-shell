@@ -54,6 +54,9 @@ API 模型：deepseek-v4-pro (复杂任务) / deepseek-v4-flash (简单任务)
 - `[TOOL:auto-fix]` — 启动自动修复循环：跑测试→失败→AI分析→改代码→重跑(最多3轮)
 - `[TOOL:web:搜索词]` — 联网搜索（DuckDuckGo）
 - `[TOOL:lsp]` — 运行 cargo check --message-format=json，返回类型错误和符号信息
+- `[TOOL:edit:文件:起始行:结束行::内容]` — **增量编辑**，只改指定行，不动其他行。安全高效
+- `[TOOL:snap]` — 查看文件快照列表，支持按文件粒度回滚
+- `[TOOL:lsp-rich:符号名]` — **深度 LSP**：符号定义+所有引用+类型错误+修复建议
 - `[TOOL:rollback]` — 回滚当前会话所有修改
 - `[TOOL:save:要记住的内容]` — 保存到 FORGESHELL_CONTEXT.md 跨会话记忆
 

@@ -239,6 +239,22 @@ async function executeTool(tool, arg) {
       else addMsg('system', '🔬 未找到 ' + arg);
       break;
 
+    case 'edit':
+      var parts = arg.split('::'); var path = parts[0].trim();
+      var start = parseInt(parts[1]) || 0; var end = parseInt(parts[2]) || 0;
+      var content = parts.slice(3).join('::').trim() || prompt('新内容（\\n换行）：') || '';
+      var r = await fetch('/api/edit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:path, start:start, end:end, content:content}) });
+      var d = await r.json();
+      addMsg('system', d.ok ? '✏ ' + d.replaced + ' (' + d.total_lines + '行)' : '❌ ' + d.error);
+      break;
+
+    case 'snap':
+      var r = await fetch('/api/snapshot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'list'}) });
+      var d = await r.json();
+      if (d.ok && d.snapshots.length) addMsg('system', '📸 快照:\n' + d.snapshots.map(function(s) { return s.file + ' @' + s.at; }).join('\n'));
+      else addMsg('system', '📸 无快照');
+      break;
+
     case 'structure':
       var r = await fetch('/api/structure');
       var d = await r.json();

@@ -880,6 +880,132 @@ fn build_file_tree(root: &Path, current: &Path, depth: usize, max_depth: usize) 
     items
 }
 
+/// 增量编辑：只改指定行，不覆写全文件
+pub async fn edit_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = req["path"].as_str().unwrap_or("");
+    let start_line = req["start"].as_u64().unwrap_or(0) as usize;
+    let end_line = req["end"].as_u64().unwrap_or(0) as usize;
+    let content = req["content"].as_str().unwrap_or("");
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let full_path = cwd.join(path);
+
+    // 读原文件
+    let original = match std::fs::read_to_string(&full_path) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    };
+
+    // 备份原文件
+    let _ = state.backup.lock().await.backup_before_write(&full_path, &format!("edit {}-{}", start_line, end_line));
+
+    // 行级别替换
+    let mut lines: Vec<&str> = original.lines().collect();
+    let s = start_line.max(1).min(lines.len());
+    let e = if end_line > 0 { end_line.min(lines.len()) } else { s };
+    let new_lines: Vec<&str> = content.lines().collect();
+
+    let mut result = Vec::new();
+    result.extend_from_slice(&lines[..s-1]);
+    result.extend(&new_lines);
+    result.extend_from_slice(&lines[e..]);
+
+    let new_content = result.join("\n");
+    if let Err(e) = std::fs::write(&full_path, &new_content) {
+        return Json(serde_json::json!({"ok": false, "error": e.to_string()}));
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "path": path,
+        "replaced": format!("行{}-{} → {}行", s, e, new_lines.len()),
+        "total_lines": result.len()
+    }))
+}
+
+/// 文件快照回滚（按文件粒度，SHA256 校验）
+pub async fn snapshot_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let action = req["action"].as_str().unwrap_or("list");
+    let backup = state.backup.lock().await;
+
+    match action {
+        "list" => {
+            let snaps: Vec<_> = backup.session_backups().iter().map(|e| {
+                serde_json::json!({"file": e.original_path.to_string_lossy(), "at": e.timestamp.to_rfc3339(), "desc": e.description})
+            }).collect();
+            Json(serde_json::json!({"ok": true, "snapshots": snaps}))
+        }
+        "rollback" => {
+            let file = req["file"].as_str().unwrap_or("");
+            let path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(file);
+            match backup.rollback_file(&path) {
+                Ok(true) => Json(serde_json::json!({"ok": true, "message": format!("{} 已回滚", file)})),
+                Ok(false) => Json(serde_json::json!({"ok": false, "error": "未找到快照"})),
+                Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        _ => Json(serde_json::json!({"ok": false, "error": "未知操作"}))
+    }
+}
+
+/// LSP 信息：运行 rust-analyzer 获取符号和类型信息
+pub async fn lsp_rich_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let target = req["target"].as_str().unwrap_or("");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut result = serde_json::json!({"ok": true, "definitions": [], "references": [], "hover": ""});
+
+    // 1. 符号定义（ripgrep + 简单解析）
+    if !target.is_empty() {
+        let def_cmd = format!("rg -n \"fn {}|struct {}|enum {}|trait {}|impl {}\" --type rust -m 10", target, target, target, target, target);
+        if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &def_cmd]).current_dir(&cwd).output().await {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let defs: Vec<_> = stdout.lines().take(5).map(|l| l.to_string()).collect();
+            result["definitions"] = serde_json::json!(defs);
+        }
+
+        // 2. 所有引用（排除定义行）
+        let ref_cmd = format!("rg -n \"{}\" --type rust | grep -v \"fn {}\" | head -20", target, target);
+        if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &ref_cmd]).current_dir(&cwd).output().await {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let refs: Vec<_> = stdout.lines().take(10).map(|l| l.to_string()).collect();
+            result["references"] = serde_json::json!(refs);
+        }
+    }
+
+    // 3. cargo check 类型错误
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", "cargo check --message-format=json 2>&1"]).current_dir(&cwd).output().await {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let errors: Vec<_> = stdout.lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|m| m["reason"].as_str() == Some("compiler-message"))
+            .filter_map(|m| {
+                let msg = &m["message"];
+                if msg["level"].as_str() == Some("error") {
+                    let spans = &msg["spans"];
+                    let code = msg["code"].as_str().map(|c| c.to_string());
+                    Some(serde_json::json!({
+                        "message": msg["message"],
+                        "file": spans[0]["file_name"],
+                        "line": spans[0]["line_start"],
+                        "code": code,
+                        "fix": msg["rendered"].as_str().unwrap_or("").chars().take(200).collect::<String>(),
+                    }))
+                } else { None }
+            }).take(15).collect();
+        result["check_errors"] = serde_json::json!(errors);
+    }
+
+    Json(result)
+}
+
 /// LSP 信息：运行 cargo check 并解析错误
 pub async fn lsp_handler(
     Json(req): Json<serde_json::Value>,

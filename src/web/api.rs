@@ -1005,33 +1005,64 @@ pub async fn snapshot_handler(
     }
 }
 
-/// LSP 信息：运行 rust-analyzer 获取符号和类型信息
+/// LSP 信息：Tree-sitter AST 解析 + 符号索引 + cargo check
 pub async fn lsp_rich_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let target = req["target"].as_str().unwrap_or("");
+    let file = req["file"].as_str().unwrap_or("");
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut result = serde_json::json!({"ok": true, "definitions": [], "references": [], "hover": ""});
+    let mut result = serde_json::json!({"ok": true, "definitions": [], "references": [], "imports": [], "check_errors": []});
 
-    // 1. 符号定义（ripgrep + 简单解析）
-    if !target.is_empty() {
-        let def_cmd = format!("rg -n \"fn {}|struct {}|enum {}|trait {}|impl {}\" --type rust -m 10", target, target, target, target, target);
-        if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &def_cmd]).current_dir(&cwd).output().await {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let defs: Vec<_> = stdout.lines().take(5).map(|l| l.to_string()).collect();
-            result["definitions"] = serde_json::json!(defs);
+    // 1. Tree-sitter AST 符号解析
+    if let Some(mut parser) = crate::engine::ast_parser::AstParser::new() {
+        // 解析指定文件或搜索所有 rs 文件
+        let files: Vec<PathBuf> = if !file.is_empty() {
+            vec![cwd.join(file)]
+        } else {
+            // 找所有 .rs 文件（排除 target）
+            let mut fs = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(cwd.join("src")) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.extension().map(|e| e == "rs").unwrap_or(false) {
+                        fs.push(p);
+                    }
+                }
+            }
+            fs
+        };
+
+        let mut all_syms = Vec::new();
+        let mut all_refs = Vec::new();
+        let mut all_imports = Vec::new();
+
+        for f in &files {
+            if let Ok(source) = std::fs::read_to_string(f) {
+                let rel_path = f.strip_prefix(&cwd).unwrap_or(f).to_string_lossy().to_string();
+                let syms = parser.parse_symbols(&source, &rel_path);
+                all_syms.extend(syms);
+                all_imports.extend(parser.parse_imports(&source));
+
+                if !target.is_empty() {
+                    let refs = parser.find_references(&source, target, &rel_path);
+                    all_refs.extend(refs);
+                }
+            }
         }
 
-        // 2. 所有引用（排除定义行）
-        let ref_cmd = format!("rg -n \"{}\" --type rust | grep -v \"fn {}\" | head -20", target, target);
-        if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", &ref_cmd]).current_dir(&cwd).output().await {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let refs: Vec<_> = stdout.lines().take(10).map(|l| l.to_string()).collect();
-            result["references"] = serde_json::json!(refs);
-        }
+        result["definitions"] = serde_json::json!(all_syms.iter().map(|s| serde_json::json!({
+            "name": s.name, "kind": s.kind, "file": s.file, "line": s.line, "signature": s.signature
+        })).collect::<Vec<_>>());
+
+        result["references"] = serde_json::json!(all_refs.iter().map(|r| serde_json::json!({
+            "symbol": r.symbol, "file": r.file, "line": r.line, "context": r.context
+        })).collect::<Vec<_>>());
+
+        result["imports"] = serde_json::json!(all_imports);
     }
 
-    // 3. cargo check 类型错误
+    // 2. cargo check 错误
     if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", "cargo check --message-format=json 2>&1"]).current_dir(&cwd).output().await {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let errors: Vec<_> = stdout.lines()
@@ -1040,14 +1071,11 @@ pub async fn lsp_rich_handler(
             .filter_map(|m| {
                 let msg = &m["message"];
                 if msg["level"].as_str() == Some("error") {
-                    let spans = &msg["spans"];
-                    let code = msg["code"].as_str().map(|c| c.to_string());
                     Some(serde_json::json!({
                         "message": msg["message"],
-                        "file": spans[0]["file_name"],
-                        "line": spans[0]["line_start"],
-                        "code": code,
-                        "fix": msg["rendered"].as_str().unwrap_or("").chars().take(200).collect::<String>(),
+                        "file": msg["spans"][0]["file_name"],
+                        "line": msg["spans"][0]["line_start"],
+                        "code": msg["code"],
                     }))
                 } else { None }
             }).take(15).collect();

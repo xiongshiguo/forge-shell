@@ -39,21 +39,29 @@ impl AgentExecutor {
         }
     }
 
-    /// 执行一个 Agent 任务（带工具循环）
+    /// 执行一个 Agent 任务（规划→执行→验证闭环）
     pub async fn run(&self, task_desc: &str, system_prompt: &str) -> Result<AgentResult, ForgeError> {
         let mut client = InferenceClient::new(&self.config)?;
         let mut tools_used = Vec::new();
         let mut conversation = vec![
             ChatMessage::system(system_prompt),
             ChatMessage::user(&format!(
-                "执行以下子任务。你可以使用工具:\n\
-                 [TOOL:read:文件路径] 或 [TOOL:read:文件:起始行:结束行] - 读取文件\n\
-                 [TOOL:search:关键字] - 全项目搜索\n\
-                 [TOOL:exec:命令] - 执行白名单命令(cargo/git)\n\
-                 [TOOL:infer:函数名] - 分析函数签名和调用链\n\
+                "你是一个自主编程 Agent。执行以下任务。\n\n\
+                 ## 可用工具\n\
+                 [TOOL:read:路径] - 读文件（可选 :起始行:结束行）\n\
+                 [TOOL:search:关键字] - 全项目 ripgrep 搜索\n\
+                 [TOOL:exec:命令] - 执行白名单命令(cargo check/test/build, git status/diff/log)\n\
+                 [TOOL:infer:函数名] - Tree-sitter AST 分析函数/结构体定义和引用\n\
+                 [TOOL:lsp-rich:符号] - 全局符号索引+类型信息+编译错误\n\
                  \n\
-                 每次回复可以包含工具调用，工具返回后你会收到结果，然后可以继续或给出最终答案。\n\
-                 子任务: {}", task_desc
+                 ## 工作流程\n\
+                 1. 第一步：用 search/lsp-rich 了解现状\n\
+                 2. 第二步：用 read 读取相关文件\n\
+                 3. 第三步：执行修改或分析\n\
+                 4. 第四步：用 exec:cargo check 验证\n\
+                 5. 最后给出完整答案。每步用 [TOOL:...] 标记\n\
+                 \n\
+                 ## 任务\n{}", task_desc
             )),
         ];
 
@@ -133,6 +141,25 @@ impl AgentExecutor {
                     Ok(o) => ToolResult { tool: tool.into(), arg: arg.into(), output: String::from_utf8_lossy(&o.stdout).to_string(), success: o.status.success() },
                     Err(e) => ToolResult { tool: tool.into(), arg: arg.into(), output: e.to_string(), success: false },
                 }
+            }
+            "lsp-rich" => {
+                // 使用 AstParser 做全局符号分析
+                let mut output = String::new();
+                if let Some(mut parser) = crate::engine::ast_parser::AstParser::new() {
+                    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    if let Ok(entries) = std::fs::read_dir(cwd.join("src")) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.extension().map(|e| e == "rs").unwrap_or(false) {
+                                if let Ok(src) = std::fs::read_to_string(&p) {
+                                    let syms = parser.parse_symbols(&src, &p.to_string_lossy());
+                                    for s in &syms { output.push_str(&format!("{}:{} {} {}\n", s.file, s.line, s.kind, s.name)); }
+                                }
+                            }
+                        }
+                    }
+                }
+                ToolResult { tool: tool.into(), arg: arg.into(), output: if output.is_empty() { "无符号".into() } else { output }, success: true }
             }
             "infer" => {
                 // 搜索函数定义和调用

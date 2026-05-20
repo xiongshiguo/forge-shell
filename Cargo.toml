@@ -1,6 +1,6 @@
 [package]
 name = "forge-shell"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 description = "熔炉 (ForgeShell) — 以意为炉，以语为锤，铸代码之剑"
 license = "AGPL-3.0"
@@ -32,6 +32,10 @@ clap = { version = "4", features = ["derive"] }
 
 # 差异对比
 similar = "2"
+
+# AST 解析
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
 
 # 配置
 toml = "0.8"

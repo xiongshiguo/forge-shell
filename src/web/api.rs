@@ -297,6 +297,27 @@ fn context_file_path() -> std::path::PathBuf {
         .join("FORGESHELL_CONTEXT.md")
 }
 
+fn compute_fingerprint() -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut hash = String::new();
+    if let Ok(entries) = std::fs::read_dir(&cwd) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" { continue; }
+            if let Ok(meta) = e.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    name.hash(&mut h);
+                    modified.hash(&mut h);
+                    hash.push_str(&format!("{:x}", h.finish()));
+                }
+            }
+        }
+    }
+    hash
+}
+
 fn scan_project() -> String {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut info = format!("\n\n## 当前项目\n路径: {}\n", cwd.display());
@@ -1032,14 +1053,31 @@ pub async fn chat_handler(
         )));
         // 稳定提示词——不动一个字，让 DeepSeek Prefix Cache 生效
         let system_msg = crate::system_prompt::get_system_prompt();
-        // 上下文附加到用户消息末尾，保持 system prompt 稳定
-        let context = load_context();
-        let project_info = scan_project();
-        let user_msg = if context.is_empty() {
-            format!("{}{}", req.message, project_info)
-        } else {
-            format!("{}{}\n\n跨会话记忆: {}", req.message, project_info, context)
+
+        // L2: 项目指纹缓存——目录没变就不发项目信息
+        let project_info = {
+            let new_fp = compute_fingerprint();
+            let mut old_fp = state_clone.project_fingerprint.lock().await;
+            if *old_fp == new_fp {
+                String::new() // 指纹未变，不发
+            } else {
+                *old_fp = new_fp;
+                scan_project() // 指纹变了，发
+            }
         };
+
+        // L3: 会话压缩——旧轮摘要，新轮完整
+        let context = load_context();
+        let mut turn = state_clone.session_turn.lock().await;
+        *turn += 1;
+        let compressed = if *turn > 5 {
+            let summaries = state_clone.session_summaries.lock().await;
+            if !summaries.is_empty() {
+                format!("\n\n历史摘要(前{}轮):\n{}", summaries.len(), summaries.join("\n"))
+            } else { String::new() }
+        } else { String::new() };
+
+        let user_msg = format!("{}{}{}{}", req.message, project_info, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
 
         // 子任务级路由：复杂任务拆解，每个子任务独立选模型
         if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {

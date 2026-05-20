@@ -222,6 +222,13 @@ async function executeTool(tool, arg) {
       addMsg('system', '已回滚 ' + d.rolled_back + ' 个文件');
       break;
 
+    case 'explore':
+      var r = await fetch('/api/explore');
+      var d = await r.json();
+      if (d.ok && d.findings.length) addMsg('system', '🔍 项目探查:\n' + d.findings.join('\n'));
+      else addMsg('system', '🔍 探查无结果');
+      break;
+
     case 'save':
       var r = await fetch('/api/save-context', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:arg}) });
       var d = await r.json();

@@ -72,6 +72,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/web-search", axum::routing::post(api::web_search_handler))
         .route("/api/lsp", axum::routing::post(api::lsp_handler))
         .route("/api/files", get(api::files_handler))
+        .route("/api/explore", get(api::explore_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
         .route("/api/auto-fix", get(api::auto_fix_handler))
         .route("/api/rollback", axum::routing::post(api::rollback_handler))

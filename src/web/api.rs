@@ -415,34 +415,53 @@ pub async fn auto_fix_handler(
                 return;
             }
 
-            // 截取关键错误信息（最后 2000 字符）
-            let error_text = if stderr.len() > 2000 { &stderr[stderr.len()-2000..] } else { &stderr };
-            let msg2 = format!("❌ 测试失败:\n{}\n\n🤔 分析错误并生成修复...\n", error_text);
-            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg2}).to_string())));
+            // 全量错误输出 + 根因分析
+            let full_err = format!("STDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+            let err_preview = format!("\n❌ 第{}轮测试失败:\n{}\n", round+1, &full_err[..full_err.len().min(3000)]);
+            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": err_preview}).to_string())));
 
-            let fix_prompt = format!(
-                "以下 cargo test 失败:\n{}\n\n请直接给出修复代码，用 ```rust:文件路径 包裹，例如：\n```rust:src/main.rs\n修复后的代码\n```\n只输出需要修改的文件，不要解释。",
-                error_text
+            // 第一步：根因分析
+            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": "\n🔍 分析根本原因...\n"}).to_string())));
+            let root_cause_prompt = format!(
+                "分析以下 cargo test 失败的根本原因。只输出1-3句话，格式：'根因: ...' \n{}",
+                &full_err[..full_err.len().min(4000)]
             );
+            let mut root_cause = String::from("未确定");
+            {
+                let msgs = vec![
+                    crate::engine::inference::ChatMessage::system("你是 Rust 编译器专家。分析测试失败的根本原因。"),
+                    crate::engine::inference::ChatMessage::user(&root_cause_prompt),
+                ];
+                if let Ok(mut stream) = client.chat_stream(msgs).await {
+                    use futures::StreamExt;
+                    while let Some(r) = stream.next().await {
+                        if let Ok(c) = r { root_cause.push_str(&c.content); }
+                    }
+                }
+            }
+            let msg_rc = format!("根因: {}\n\n🔧 生成修复方案...\n", root_cause);
+            let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg_rc}).to_string())));
 
-            let messages = vec![
-                crate::engine::inference::ChatMessage::system("你是代码修复专家。只输出修复后的完整文件内容，用```rust:路径 格式。不要解释。"),
+            // 第二步：带根因的修复
+            let fix_prompt = format!(
+                "根因: {}\n\n完整错误:\n{}\n\n根据根因修复代码。只输出修复后的完整文件，用```rust:文件路径 包裹。不要解释。",
+                root_cause, &full_err[..full_err.len().min(5000)]
+            );
+            let msgs = vec![
+                crate::engine::inference::ChatMessage::system("你是 Rust 修复专家。基于根因分析修复代码，不是盲目打补丁。用```rust:路径 格式输出。"),
                 crate::engine::inference::ChatMessage::user(&fix_prompt),
             ];
 
-            match client.chat_stream(messages).await {
+            match client.chat_stream(msgs).await {
                 Ok(mut stream) => {
                     use futures::StreamExt;
                     let mut fix_code = String::new();
                     while let Some(r) = stream.next().await {
                         if let Ok(c) = r { fix_code.push_str(&c.content); }
                     }
-
-                    // 解析并应用修复
                     let applied = apply_fix_code(&fix_code, &work_dir, &state_clone).await;
-                    let msg = format!("\n📝 已应用 {} 个文件修改\n", applied);
-                    let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": msg}).to_string())));
-
+                    let fix_msg = format!("\n📝 第{}轮：已修改{}个文件，基于根因「{}」\n", round+1, applied, &root_cause[..root_cause.len().min(100)]);
+                    let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"chunk","content": fix_msg}).to_string())));
                 }
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"error","message":format!("AI 调用失败: {}", e)}).to_string())));
@@ -486,6 +505,54 @@ async fn apply_fix_code(fix_code: &str, work_dir: &Path, state: &SharedState) ->
         }
     }
     count
+}
+
+/// 探索工具：自动扫描项目结构、文档、最近提交
+pub async fn explore_handler() -> Json<serde_json::Value> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut findings = Vec::new();
+
+    // 1. 扫描文档目录
+    for doc_dir in ["docs", "doc", "documentation", ".github"] {
+        let path = cwd.join(doc_dir);
+        if path.exists() && path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                let files: Vec<_> = entries.flatten()
+                    .filter_map(|e| {
+                        let n = e.file_name().to_string_lossy().to_string();
+                        if n.ends_with(".md") || n.ends_with(".txt") || n.ends_with(".yml") { Some(n) } else { None }
+                    }).collect();
+                if !files.is_empty() {
+                    findings.push(format!("📁 {}/: {}", doc_dir, files.join(", ")));
+                }
+            }
+        }
+    }
+
+    // 2. 检查 README
+    for readme in ["README.md", "README.txt", "README"] {
+        if cwd.join(readme).exists() {
+            if let Ok(content) = std::fs::read_to_string(cwd.join(readme)) {
+                findings.push(format!("📄 {} ({} 字符): {}", readme, content.len(), &content[..content.len().min(500)]));
+            }
+            break;
+        }
+    }
+
+    // 3. 最近 git log
+    if let Ok(output) = tokio::process::Command::new("cmd").args(["/C", "git log --oneline -5"]).current_dir(&cwd).output().await {
+        let log = String::from_utf8_lossy(&output.stdout);
+        if !log.trim().is_empty() {
+            findings.push(format!("📋 最近提交:\n{}", log.trim()));
+        }
+    }
+
+    // 4. 项目类型判断
+    if cwd.join("Cargo.toml").exists() { findings.push("🦀 Rust 项目".into()); }
+    if cwd.join("package.json").exists() { findings.push("📦 Node 项目".into()); }
+    if cwd.join("go.mod").exists() { findings.push("🔵 Go 项目".into()); }
+
+    Json(serde_json::json!({"ok": true, "findings": findings}))
 }
 
 /// 读取文件内容（支持行范围）

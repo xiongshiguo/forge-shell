@@ -54,6 +54,7 @@ pub struct AppState {
     pub cache_hit_rate: Mutex<f64>,
     pub active_agents: Mutex<usize>,
     pub has_api_key: bool,
+    pub cache_stats: Mutex<crate::engine::inference::TokenUsage>,
     pub evolution: Mutex<EvolutionCoordinator>,
     pub backup: Mutex<BackupManager>,
     pub rate_limiter: RateLimiter,
@@ -78,6 +79,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         cache_hit_rate: Mutex::new(0.0),
         active_agents: Mutex::new(0),
         has_api_key: has_key,
+        cache_stats: Mutex::new(crate::engine::inference::TokenUsage::default()),
         evolution: Mutex::new(EvolutionCoordinator::new(
             crate::config::forge_data_dir().join("evolution")
         )),

@@ -5,12 +5,18 @@ use crate::error::ForgeError;
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
-/// Token 用量统计
+/// Token 用量统计（含缓存命中）
 #[derive(Debug, Clone, Default)]
 pub struct TokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    /// Prefix Cache 命中 token 数（免费）
+    pub cache_hit_tokens: u64,
+    /// 未命中缓存的 token 数（收费）
+    pub cache_miss_tokens: u64,
+    /// 命中率
+    pub cache_hit_rate: f64,
 }
 
 /// SSE 流式 chunk
@@ -47,7 +53,7 @@ impl InferenceClient {
 
     /// 流式聊天（返回 SSE stream）
     pub async fn chat_stream(
-        &self,
+        &mut self,
         messages: Vec<ChatMessage>,
     ) -> Result<impl Stream<Item = Result<StreamChunk, ForgeError>>, ForgeError> {
         let body = ChatRequest {
@@ -84,8 +90,8 @@ impl InferenceClient {
         Ok(stream)
     }
 
-    /// 解析 SSE 数据行
-    fn parse_sse_line(&self, text: &str) -> Result<StreamChunk, ForgeError> {
+    /// 解析 SSE 数据行（含缓存命中统计）
+    fn parse_sse_line(&mut self, text: &str) -> Result<StreamChunk, ForgeError> {
         let mut content = String::new();
         let mut finish_reason = None;
 
@@ -107,6 +113,25 @@ impl InferenceClient {
                             }
                             if let Some(reason) = choice["finish_reason"].as_str() {
                                 finish_reason = Some(reason.to_string());
+                            }
+                        }
+                    }
+                    // 捕获 usage 数据（含 prefix cache 命中）
+                    if let Some(usage) = parsed["usage"].as_object() {
+                        let pt = usage.get("prompt_tokens").and_then(|v| v.as_u64());
+                        let ct = usage.get("completion_tokens").and_then(|v| v.as_u64());
+                        let tt = usage.get("total_tokens").and_then(|v| v.as_u64());
+                        let cache = usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64());
+                        let miss = usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64());
+                        if let (Some(pt), Some(ct)) = (pt, ct) {
+                            self.total_usage.prompt_tokens += pt;
+                            self.total_usage.completion_tokens += ct;
+                            self.total_usage.total_tokens += tt.unwrap_or(pt + ct);
+                            if let Some(c) = cache { self.total_usage.cache_hit_tokens += c; }
+                            if let Some(m) = miss { self.total_usage.cache_miss_tokens += m; }
+                            let total = self.total_usage.cache_hit_tokens + self.total_usage.cache_miss_tokens;
+                            if total > 0 {
+                                self.total_usage.cache_hit_rate = self.total_usage.cache_hit_tokens as f64 / total as f64;
                             }
                         }
                     }

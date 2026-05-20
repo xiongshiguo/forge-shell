@@ -68,6 +68,10 @@ pub struct CostResponse {
     pub monthly_used: f64,
     pub monthly_budget: f64,
     pub vs_claude_savings_pct: f64,
+    pub cache_hit_tokens: u64,
+    pub cache_miss_tokens: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -393,7 +397,7 @@ pub async fn auto_fix_handler(
     tokio::spawn(async move {
         let work_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let config = state_clone.config.lock().await.clone();
-        let client = match crate::engine::inference::InferenceClient::new(&config) {
+        let mut client = match crate::engine::inference::InferenceClient::new(&config) {
             Ok(c) => c,
             Err(e) => { let _ = tx.send(Ok(Event::default().data(serde_json::json!({"type":"error","message":e.to_string()}).to_string()))); return; }
         };
@@ -977,7 +981,7 @@ pub async fn ping_handler(
         return Json(serde_json::json!({"ok": false, "error": "未配置 API Key"}));
     }
 
-    let client = match crate::engine::inference::InferenceClient::new(&config) {
+    let mut client = match crate::engine::inference::InferenceClient::new(&config) {
         Ok(c) => c,
         Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("客户端创建失败: {}", e)})),
     };
@@ -1066,7 +1070,7 @@ pub async fn chat_handler(
                             let system_msg = system_msg.clone();
 
                             handles.push(tokio::spawn(async move {
-                                let client = match crate::engine::inference::InferenceClient::new(&task_config) {
+                                let mut client = match crate::engine::inference::InferenceClient::new(&task_config) {
                                     Ok(c) => c,
                                     Err(e) => return format!("[{}] 错误: {}", task_id, e),
                                 };
@@ -1116,7 +1120,7 @@ pub async fn chat_handler(
             }
         }
 
-        let client = match crate::engine::inference::InferenceClient::new(&config) {
+        let mut client = match crate::engine::inference::InferenceClient::new(&config) {
             Ok(c) => c,
             Err(e) => {
                 let _ = tx.send(Ok(Event::default().data(
@@ -1225,16 +1229,13 @@ pub async fn cost_handler(
     State(state): State<SharedState>,
 ) -> Json<CostResponse> {
     let cost = *state.total_cost.lock().await;
-    let hit_rate = *state.cache_hit_rate.lock().await;
-    // DeepSeek 缓存命中 token 免费，估算节省为 cost * hit_rate
-    let cache_saved = cost * hit_rate;
-    // Claude Code 估算：相比 DeepSeek，同任务费用高约 20-25 倍
+    let cache = state.cache_stats.lock().await.clone();
+    let hit_rate = cache.cache_hit_rate.max(*state.cache_hit_rate.lock().await);
+    let cache_saved = (cache.cache_hit_tokens as f64) * 0.000001; // ¥1/M tokens
     let vs_claude = if cost > 0.0 {
         let claude_estimated = cost * 22.0;
         ((claude_estimated - cost) / claude_estimated * 100.0).min(99.0)
-    } else {
-        0.0
-    };
+    } else { 0.0 };
 
     Json(CostResponse {
         total_cost: cost,
@@ -1243,6 +1244,10 @@ pub async fn cost_handler(
         monthly_used: cost,
         monthly_budget: 100.0,
         vs_claude_savings_pct: vs_claude,
+        cache_hit_tokens: cache.cache_hit_tokens,
+        cache_miss_tokens: cache.cache_miss_tokens,
+        prompt_tokens: cache.prompt_tokens,
+        completion_tokens: cache.completion_tokens,
     })
 }
 

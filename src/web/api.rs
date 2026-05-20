@@ -815,6 +815,13 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// MCP JSON-RPC 端点
+pub async fn mcp_handler(
+    Json(req): Json<crate::engine::mcp::JsonRpcRequest>,
+) -> Json<crate::engine::mcp::JsonRpcResponse> {
+    Json(crate::engine::mcp::handle_mcp_request(&req).await)
+}
+
 /// 获取项目文件树（排除 .git/target/node_modules）
 pub async fn files_handler() -> Json<serde_json::Value> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -1019,14 +1026,16 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}复杂度，预计¥{:.4})", decision.model, emoji, decision.complexity.name(), decision.estimated_cost)}).to_string()
         )));
-        // 加载项目上下文（子任务路由和普通路由都需要）
+        // 稳定提示词——不动一个字，让 DeepSeek Prefix Cache 生效
+        let system_msg = crate::system_prompt::get_system_prompt();
+        // 上下文附加到用户消息末尾，保持 system prompt 稳定
         let context = load_context();
         let project_info = scan_project();
-        let mut system_msg = crate::system_prompt::get_system_prompt();
-        system_msg.push_str(&project_info);
-        if !context.is_empty() {
-            system_msg.push_str(&format!("\n\n## 跨会话记忆\n{}", context));
-        }
+        let user_msg = if context.is_empty() {
+            format!("{}{}", req.message, project_info)
+        } else {
+            format!("{}{}\n\n跨会话记忆: {}", req.message, project_info, context)
+        };
 
         // 子任务级路由：复杂任务拆解，每个子任务独立选模型
         if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {
@@ -1119,7 +1128,7 @@ pub async fn chat_handler(
 
         let messages = vec![
             crate::engine::inference::ChatMessage::system(&system_msg),
-            crate::engine::inference::ChatMessage::user(&req.message),
+            crate::engine::inference::ChatMessage::user(&user_msg),
         ];
 
         match client.chat_stream(messages).await {

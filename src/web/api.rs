@@ -597,6 +597,39 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// 获取项目文件树（排除 .git/target/node_modules）
+pub async fn files_handler() -> Json<serde_json::Value> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let tree = build_file_tree(&cwd, &cwd, 0, 3);
+    Json(serde_json::json!({"ok": true, "files": tree}))
+}
+
+fn build_file_tree(root: &Path, current: &Path, depth: usize, max_depth: usize) -> Vec<serde_json::Value> {
+    if depth > max_depth { return vec![]; }
+    let mut items = Vec::new();
+    let skip = ["target", ".git", "node_modules", ".ai", "__pycache__", ".rustup", "debug_screenshots", "logs"];
+
+    if let Ok(entries) = std::fs::read_dir(current) {
+        let mut children: Vec<_> = entries.flatten().collect();
+        children.sort_by_key(|e| (!e.file_type().map(|t| t.is_dir()).unwrap_or(false), e.file_name().to_string_lossy().to_string()));
+
+        for entry in children {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || skip.contains(&name.as_str()) { continue; }
+
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                let sub = build_file_tree(root, &entry.path(), depth + 1, max_depth);
+                items.push(serde_json::json!({"name": name, "dir": true, "children": sub}));
+            } else {
+                let ext = std::path::Path::new(&name).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                items.push(serde_json::json!({"name": name, "dir": false, "ext": ext}));
+            }
+        }
+    }
+    items
+}
+
 /// LSP 信息：运行 cargo check 并解析错误
 pub async fn lsp_handler(
     Json(req): Json<serde_json::Value>,

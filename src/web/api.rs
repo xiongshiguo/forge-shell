@@ -507,6 +507,83 @@ async fn apply_fix_code(fix_code: &str, work_dir: &Path, state: &SharedState) ->
     count
 }
 
+/// 并行读取多个文件
+pub async fn parallel_handler(
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let paths: Vec<String> = req["paths"].as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let mut handles = Vec::new();
+    for path in paths {
+        let full = cwd.join(&path);
+        handles.push(tokio::spawn(async move {
+            match std::fs::read_to_string(&full) {
+                Ok(content) => {
+                    let lines: Vec<_> = content.lines().take(100).enumerate()
+                        .map(|(i, l)| format!("{:>5}  {}", i+1, l)).collect();
+                    serde_json::json!({"path": path, "ok": true, "lines": lines, "total": content.lines().count()})
+                }
+                Err(e) => serde_json::json!({"path": path, "ok": false, "error": e.to_string()}),
+            }
+        }));
+    }
+
+    let mut results = Vec::new();
+    for h in handles {
+        if let Ok(r) = h.await { results.push(r); }
+    }
+
+    Json(serde_json::json!({"ok": true, "results": results}))
+}
+
+/// 保存会话
+pub async fn session_save_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let title = req["title"].as_str().unwrap_or("未命名");
+    let msgs: Vec<String> = req["messages"].as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session = serde_json::json!({
+        "id": session_id,
+        "title": title,
+        "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+        "turns": msgs.len() / 2,
+        "preview": msgs.last().map(|s| s.chars().take(40).collect::<String>()).unwrap_or_default(),
+    });
+
+    let dir = crate::config::forge_data_dir().join("sessions");
+    std::fs::create_dir_all(&dir).ok();
+    let _ = std::fs::write(dir.join(format!("session_{}.json", &session_id[..8])),
+        serde_json::to_string_pretty(&session).unwrap_or_default());
+
+    let summary = state.evolution.lock().await.summary();
+    Json(serde_json::json!({"ok": true, "id": session_id, "experiences": summary.total_experiences, "sops": summary.sop_count}))
+}
+
+/// 获取会话列表
+pub async fn sessions_list_handler() -> Json<serde_json::Value> {
+    let dir = crate::config::forge_data_dir().join("sessions");
+    let mut sessions = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                if let Ok(s) = serde_json::from_str::<serde_json::Value>(&content) {
+                    sessions.push(s);
+                }
+            }
+        }
+    }
+    sessions.sort_by_key(|s| std::cmp::Reverse(s["date"].as_str().unwrap_or("").to_string()));
+    Json(serde_json::json!({"ok": true, "sessions": sessions.iter().take(10).collect::<Vec<_>>()}))
+}
+
 /// 探索工具：自动扫描项目结构、文档、最近提交
 pub async fn explore_handler() -> Json<serde_json::Value> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));

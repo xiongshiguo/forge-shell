@@ -222,6 +222,16 @@ async function executeTool(tool, arg) {
       addMsg('system', '已回滚 ' + d.rolled_back + ' 个文件');
       break;
 
+    case 'parallel':
+      var paths = arg.split(',').map(function(p) { return p.trim(); });
+      var r = await fetch('/api/parallel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paths:paths}) });
+      var d = await r.json();
+      if (d.ok) d.results.forEach(function(res) {
+        if (res.ok) addMsg('system', '📄 ' + res.path + ' (' + res.total + '行)\n' + (res.lines||[]).join('\n').substring(0, 1000));
+        else addMsg('system', '❌ ' + res.path + ': ' + res.error);
+      });
+      break;
+
     case 'explore':
       var r = await fetch('/api/explore');
       var d = await r.json();
@@ -272,6 +282,7 @@ async function refreshRight() {
 
     var c = await fetch('/api/cost'); var cd = await c.json();
     document.getElementById('savings-val').textContent = '节省 ' + cd.vs_claude_savings_pct.toFixed(0) + '%';
+    loadSessions();
   } catch(e) {}
 }
 
@@ -306,5 +317,26 @@ async function submitReview() {
   var el = document.getElementById('review-msg');
   el.textContent = d.ok ? '✅ 已提交（经验' + d.experiences + '条/SOP'+d.sops+'条）' : '提交失败';
   el.style.color = d.ok ? 'var(--green)' : 'var(--red)';
-  if (d.ok) setTimeout(function() { document.getElementById('review-modal').style.display = 'none'; }, 1500);
+  if (d.ok) { saveSession(); setTimeout(function() { document.getElementById('review-modal').style.display = 'none'; }, 1500); }
+}
+
+async function saveSession() {
+  var msgs = document.querySelectorAll('#messages .message');
+  var all = [];
+  msgs.forEach(function(m) { all.push((m.textContent||'').substring(0, 100)); });
+  await fetch('/api/session/save', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title: document.title||'对话', messages:all}) });
+}
+
+async function loadSessions() {
+  try {
+    var r = await fetch('/api/sessions');
+    var d = await r.json();
+    if (d.ok && d.sessions.length) {
+      var html = '';
+      d.sessions.forEach(function(s) {
+        html += '<div style="margin:4px 0;cursor:pointer;color:var(--text-dim)" onclick="addMsg(\'system\',\'会话: '+s.title+' ('+s.turns+'轮 '+s.date+')\')">📋 '+s.title+' ('+s.turns+'轮)<br><span style="font-size:10px">'+s.date+'</span></div>';
+      });
+      document.getElementById('recent-sessions').innerHTML = html;
+    }
+  } catch(e) {}
 }

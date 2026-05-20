@@ -240,3 +240,89 @@ impl CacheManager {
         counts
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_test_cache(max: usize) -> CacheManager { CacheManager::new(max) }
+
+    #[test]
+    fn test_cache_hit_and_miss() {
+        let mut cache = new_test_cache(10);
+        cache.set("k1", "v1", 5);
+        assert!(cache.get("k1").is_some());
+        assert!(cache.get("k2").is_none());
+    }
+
+    #[test]
+    fn test_lru_eviction() {
+        let mut cache = new_test_cache(3);
+        cache.set("a", "1", 1);
+        cache.set("b", "2", 1);
+        cache.set("c", "3", 1);
+        cache.set("d", "4", 1); // 应驱逐 a
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("d").is_some());
+    }
+
+    #[test]
+    fn test_lru_reorder_on_get() {
+        let mut cache = new_test_cache(2);
+        cache.set("a", "1", 1);
+        cache.set("b", "2", 1);
+        cache.get("a"); // a 变最新
+        cache.set("c", "3", 1); // 应驱逐 b
+        assert!(cache.get("a").is_some());
+        assert!(cache.get("b").is_none());
+    }
+
+    #[test]
+    fn test_system_level_not_evicted() {
+        let mut cache = new_test_cache(2);
+        cache.set("sys", "v", 5);
+        // 更新 level 为 L1
+        cache.entries.get_mut("sys").unwrap().level = CacheLevel::System;
+        cache.set("a", "1", 1);
+        cache.set("b", "2", 1);
+        assert!(cache.get("sys").is_some());
+    }
+
+    #[test]
+    fn test_level_counts() {
+        let mut cache = new_test_cache(10);
+        cache.set("a", "1", 1);
+        cache.set("b", "2", 1);
+        cache.set("c", "3", 1);
+        cache.entries.get_mut("a").unwrap().level = CacheLevel::Session;
+        cache.entries.get_mut("b").unwrap().level = CacheLevel::Project;
+        let counts = cache.level_counts();
+        assert!(counts[0] + counts[1] + counts[2] + counts[3] == 3);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut cache = new_test_cache(10);
+        cache.set("a", "1", 1);
+        cache.clear();
+        assert!(cache.get("a").is_none());
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let mut cache = new_test_cache(10);
+        cache.set("a", "1", 5);
+        cache.get("a"); // hit
+        cache.get("b"); // miss
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+    }
+
+    #[test]
+    fn test_max_entries_enforced() {
+        let mut cache = new_test_cache(5);
+        for i in 0..10 { cache.set(&format!("k{}", i), "v", 1); }
+        assert!(cache.len() <= 5);
+    }
+}

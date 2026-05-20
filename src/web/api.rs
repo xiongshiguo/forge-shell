@@ -931,7 +931,7 @@ pub async fn edit_handler(
     let _ = state.backup.lock().await.backup_before_write(&full_path, &format!("edit {}-{}", start_line, end_line));
 
     // 行级别替换
-    let mut lines: Vec<&str> = original.lines().collect();
+    let lines: Vec<&str> = original.lines().collect();
     let s = start_line.max(1).min(lines.len());
     let e = if end_line > 0 { end_line.min(lines.len()) } else { s };
     let new_lines: Vec<&str> = content.lines().collect();
@@ -1104,7 +1104,7 @@ pub async fn search_handler(
 
 /// 执行沙箱命令（cargo check/test/build 等白名单命令）
 pub async fn exec_handler(
-    State(state): State<SharedState>,
+    State(_state): State<SharedState>,
     Json(req): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let cmd = req["command"].as_str().unwrap_or("");

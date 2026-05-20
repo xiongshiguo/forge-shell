@@ -22,10 +22,22 @@ impl EvolutionCoordinator {
     pub fn new(data_dir: PathBuf) -> Self {
         let exp_dir = data_dir.join("experiences");
         let sop_file = data_dir.join("sop_library.json");
+        let mut lib = SopLibrary::new(sop_file);
+
+        // 冷启动：如果 SOP 库为空，加载种子数据
+        if lib.len() == 0 {
+            if let Ok(seed_json) = std::fs::read_to_string(".ai/seed_sops.json") {
+                if let Ok(seeds) = serde_json::from_str::<Vec<sop::SopEntry>>(&seed_json) {
+                    for sop in seeds { lib.add(sop); }
+                    tracing::info!("已加载 {} 条种子 SOP", lib.len());
+                }
+            }
+        }
+
         Self {
             collector: ExperienceCollector::new(exp_dir),
             reflection: ReflectionEngine::new(),
-            sop_library: SopLibrary::new(sop_file),
+            sop_library: lib,
             last_reflection: None,
         }
     }

@@ -104,7 +104,7 @@ impl SopLibrary {
             let title_words: Vec<&str> = entry.title.split(|c: char| !c.is_alphanumeric() && c != '_')
                 .filter(|w| w.len() > 1)
                 .collect();
-            let input_chars: Vec<char> = input_lower.chars().collect();
+            let _input_chars: Vec<char> = input_lower.chars().collect();
 
             for word in &title_words {
                 let word_lower = word.to_lowercase();

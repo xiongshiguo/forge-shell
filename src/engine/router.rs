@@ -197,6 +197,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_empty_input() {
+        let r = ModelRouter::default();
+        let d = r.decide("", 0);
+        assert_eq!(d.complexity, Complexity::Simple);
+    }
+
+    #[test]
+    fn test_long_input_is_complex() {
+        let r = ModelRouter::default();
+        let long = "a".repeat(2001);
+        let d = r.decide(&long, 0);
+        assert_eq!(d.complexity, Complexity::Complex);
+    }
+
+    #[test]
+    fn test_architecture_keyword() {
+        let r = ModelRouter::default();
+        assert_eq!(r.estimate_complexity("重构系统架构设计", 0), Complexity::Complex);
+    }
+
+    #[test]
+    fn test_moderate_boundary() {
+        let r = ModelRouter::default();
+        // 中等长度 + 关键词 "优化" → Moderate
+        let s = "优化这个模块的性能 修改一些实现细节 分析代码结构";
+        let d = r.decide(s, 0);
+        assert_eq!(d.complexity, Complexity::Moderate);
+    }
+
+    #[test]
     fn test_simple_query_routes_to_flash() {
         let router = ModelRouter::default();
         let decision = router.decide("什么是 Rust 的所有权？", 0);

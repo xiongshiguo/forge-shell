@@ -103,4 +103,41 @@ mod tests {
         assert!(s.validate_command("cargo build").is_ok());
         assert!(s.validate_command("git status").is_ok());
     }
+
+    #[test]
+    fn test_unknown_extension_default_blocks() {
+        let s = Sandbox::new();
+        assert!(s.validate_for_files("cargo build", &[Path::new("script.py")]).is_err());
+    }
+
+    #[test]
+    fn test_multiple_files_first_wins() {
+        let s = Sandbox::new();
+        assert!(s.validate_for_files("cargo check", &[Path::new("src/main.rs"), Path::new("README.md")]).is_ok());
+    }
+
+    #[test]
+    fn test_empty_files_allows_general() {
+        let s = Sandbox::new();
+        assert!(s.validate_for_files("git status", &[]).is_ok());
+    }
+
+    #[test]
+    fn test_blocks_even_with_rs_ext_if_dangerous() {
+        let s = Sandbox::new();
+        assert!(s.validate_for_files("rm -rf /", &[Path::new("src/main.rs")]).is_err());
+    }
+
+    #[test]
+    fn test_extra_allowed_cmds() {
+        let mut s = Sandbox::new();
+        s.allow("docker ps");
+        assert!(s.validate_for_files("docker ps", &[Path::new("docker-compose.yml")]).is_ok());
+    }
+
+    #[test]
+    fn test_json_allows_cargo_update() {
+        let s = Sandbox::new();
+        assert!(s.validate_for_files("cargo update", &[Path::new("Cargo.lock")]).is_ok());
+    }
 }

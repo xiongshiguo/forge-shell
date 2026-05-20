@@ -868,6 +868,29 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// 缓存监控仪表盘
+pub async fn cache_monitor_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let cache = state.cache_stats.lock().await.clone();
+    let hit_rate = if cache.cache_hit_tokens + cache.cache_miss_tokens > 0 {
+        cache.cache_hit_tokens as f64 / (cache.cache_hit_tokens + cache.cache_miss_tokens) as f64 * 100.0
+    } else { 0.0 };
+    let saved = cache.cache_hit_tokens as f64 * 0.000001; // 命中 token 免费 (¥1/M)
+    let cost = cache.cache_miss_tokens as f64 * 0.000001;
+
+    Json(serde_json::json!({
+        "hit_rate_pct": format!("{:.2}", hit_rate),
+        "hit_tokens": cache.cache_hit_tokens,
+        "miss_tokens": cache.cache_miss_tokens,
+        "prompt_tokens": cache.prompt_tokens,
+        "completion_tokens": cache.completion_tokens,
+        "saved_yuan": format!("{:.6}", saved),
+        "cost_yuan": format!("{:.6}", cost),
+        "total_requests": cache.total_tokens,
+    }))
+}
+
 /// MCP JSON-RPC 端点
 pub async fn mcp_handler(
     Json(req): Json<crate::engine::mcp::JsonRpcRequest>,
@@ -1276,22 +1299,17 @@ pub async fn chat_handler(
                             let system_msg = system_msg.clone();
 
                             handles.push(tokio::spawn(async move {
-                                let mut client = match crate::engine::inference::InferenceClient::new(&task_config) {
-                                    Ok(c) => c,
-                                    Err(e) => return format!("[{}] 创建失败: {}", task_id, e),
-                                };
-                                let msgs = vec![
-                                    crate::engine::inference::ChatMessage::system(&system_msg),
-                                    crate::engine::inference::ChatMessage::user(&format!("执行子任务: {}", task_desc)),
-                                ];
-                                match call_with_repair(&mut client, msgs).await {
-                                    Ok((text, _)) => {
+                                let executor = crate::agent::agent_executor::AgentExecutor::new(task_config);
+                                match executor.run(&task_desc, &system_msg).await {
+                                    Ok(result) => {
+                                        let tools_info: Vec<String> = result.tools_used.iter()
+                                            .map(|t| format!("[{}]", t.tool)).collect();
                                         let _ = tx.send(Ok(Event::default().data(
-                                            serde_json::json!({"type": "chunk", "content": format!("\n✅ [{}] {}\n", task_id, text)}).to_string()
+                                            serde_json::json!({"type": "chunk", "content": format!("\n✅ [{}] 用了{}个工具({})→{}轮完成\n{}\n", task_id, result.tools_used.len(), tools_info.join(""), result.rounds, result.final_output)}).to_string()
                                         )));
-                                        text
+                                        result.final_output
                                     }
-                                    Err(e) => format!("[{}] 失败(重试后): {}", task_id, e),
+                                    Err(e) => format!("[{}] 失败: {}", task_id, e),
                                 }
                             }));
                         }

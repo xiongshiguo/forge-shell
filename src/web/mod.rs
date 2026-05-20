@@ -122,6 +122,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/infer", axum::routing::post(api::infer_handler))
         .route("/api/structure", get(api::structure_handler))
         .route("/api/mcp", axum::routing::post(api::mcp_handler))
+        .route("/api/cache-monitor", get(api::cache_monitor_handler))
         .route("/api/exec", axum::routing::post(api::exec_handler))
         .route("/api/auto-fix", get(api::auto_fix_handler))
         .route("/api/rollback", axum::routing::post(api::rollback_handler))

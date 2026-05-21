@@ -71,35 +71,22 @@
       </div>
     </section>
 
-    <!-- 右：工作台 -->
+    <!-- 右：会话信息 -->
     <aside id="right-panel">
       <div class="panel-section">
-        <div class="panel-header collapsible" onclick="toggleSection('tools-main')">🔧 工具面板 <span class="collapse-arrow">▾</span></div>
-        <div id="tools-main" class="tool-list">
-          <div class="tool-row" onclick="var a=prompt('命令：cargo test');if(a)executeTool('exec',a)" title="运行 cargo/git 白名单命令"><span class="tool-name">▶ 执行</span><span class="tool-hint">运行命令</span></div>
-          <div class="tool-row" onclick="var a=prompt('文件路径：src/main.rs');if(a)executeTool('read',a)"><span class="tool-name">📄 读取</span><span class="tool-hint">查看文件</span></div>
-          <div class="tool-row" onclick="var a=prompt('搜索关键词：fn main');if(a)executeTool('search',a)"><span class="tool-name">🔍 搜索</span><span class="tool-hint">全项目搜</span></div>
-          <div class="tool-row" onclick="var a=prompt('联网搜索：Rust async');if(a)executeTool('web',a)"><span class="tool-name">🌐 联网</span><span class="tool-hint">查资料</span></div>
-          <div class="tool-row" onclick="executeTool('lsp', '')"><span class="tool-name">🔬 检查</span><span class="tool-hint">代码诊断</span></div>
-          <div class="tool-row" onclick="executeTool('auto-fix', '')"><span class="tool-name">🔧 修复</span><span class="tool-hint">自动修bug</span></div>
-          <div class="tool-row" onclick="executeTool('explore', '')"><span class="tool-name">🗺 探查</span><span class="tool-hint">了解项目</span></div>
+        <div class="panel-header">📊 本次会话</div>
+        <div id="session-stats">
+          <div class="stat-row"><span class="stat-label">轮次</span><span class="stat-val" id="stat-turns">0</span></div>
+          <div class="stat-row"><span class="stat-label">Token</span><span class="stat-val" id="stat-tokens">0</span></div>
+          <div class="stat-row"><span class="stat-label">缓存命中</span><span class="stat-val" id="stat-cache">-</span></div>
+          <div class="stat-row"><span class="stat-label">模型</span><span class="stat-val" id="stat-model">-</span></div>
         </div>
       </div>
+
       <div class="panel-section">
-        <div class="panel-header collapsible" onclick="toggleSection('tools-edit')">✏ 编辑分析 <span class="collapse-arrow">▸</span></div>
-        <div id="tools-edit" class="tool-list" style="display:none">
-          <div class="tool-row" onclick="var a=prompt('文件:行号:行号::新内容');if(a)executeTool('edit',a)"><span class="tool-name">✏ 编辑</span><span class="tool-hint">精确修改</span></div>
-          <div class="tool-row" onclick="var a=prompt('文件1,文件2,文件3');if(a)executeTool('parallel',a)"><span class="tool-name">⚡ 并行</span><span class="tool-hint">多文件同读</span></div>
-          <div class="tool-row" onclick="var a=prompt('函数名');if(a)executeTool('infer',a)"><span class="tool-name">🧠 推理</span><span class="tool-hint">符号分析</span></div>
-          <div class="tool-row" onclick="executeTool('structure', '')"><span class="tool-name">🏗 结构</span><span class="tool-hint">模块图</span></div>
-        </div>
-      </div>
-      <div class="panel-section">
-        <div class="panel-header collapsible" onclick="toggleSection('tools-safe')">🛡 安全操作 <span class="collapse-arrow">▸</span></div>
-        <div id="tools-safe" class="tool-list" style="display:none">
-          <div class="tool-row" onclick="executeTool('snap', '')"><span class="tool-name">📸 快照</span><span class="tool-hint">版本回溯</span></div>
-          <div class="tool-row" onclick="executeTool('rollback', '')"><span class="tool-name">↩ 回滚</span><span class="tool-hint">撤销全部</span></div>
-          <div class="tool-row" onclick="var a=prompt('要记住的内容：');if(a)executeTool('save',a)"><span class="tool-name">💾 记忆</span><span class="tool-hint">跨会话保存</span></div>
+        <div class="panel-header">📂 项目文件</div>
+        <div id="project-summary" style="font-size:11px;color:var(--text-dim)">
+          加载中…
         </div>
       </div>
 

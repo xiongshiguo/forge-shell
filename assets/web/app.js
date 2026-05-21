@@ -413,14 +413,38 @@ async function refreshRight() {
     document.getElementById('topbar-hit').textContent = (sd.hit_rate*100).toFixed(0) + '%';
     document.getElementById('cost-val').textContent = '¥' + sd.cost.toFixed(4);
     document.getElementById('hit-val').textContent = '命中 ' + (sd.hit_rate*100).toFixed(0) + '%';
+
+    // 会话统计
+    document.getElementById('stat-turns').textContent = sd.turns || 0;
+    document.getElementById('stat-tokens').textContent = formatTokens(sd.total_tokens || 0);
+    document.getElementById('stat-cache').textContent = (sd.hit_rate*100).toFixed(0) + '%';
+    document.getElementById('stat-model').textContent = sd.model || '-';
+
     if (sd.evolution) {
       document.getElementById('evo-mini').innerHTML = '经验: ' + sd.evolution.experiences + ' | SOP: ' + sd.evolution.sops + ' | 成功率: ' + (sd.evolution.success_rate*100).toFixed(0) + '%';
     }
 
     var c = await fetch('/api/cost'); var cd = await c.json();
     document.getElementById('savings-val').textContent = '节省 ' + cd.vs_claude_savings_pct.toFixed(0) + '%';
+
+    // 项目摘要
+    var f = await fetch('/api/project'); var fd = await f.json();
+    var el = document.getElementById('project-summary');
+    if (fd.ok) {
+      el.innerHTML = (fd.files||[]).slice(0, 8).map(function(x) {
+        return '<div class="proj-file">' + x.name + ' <span class="proj-lines">' + (x.lines||0) + '行</span></div>';
+      }).join('');
+      if (fd.files && fd.files.length > 8) el.innerHTML += '<div style="font-size:10px;color:var(--text-dim);margin-top:2px">…及其他 ' + (fd.files.length - 8) + ' 个文件</div>';
+    }
+
     loadSessions();
   } catch(e) {}
+}
+
+function formatTokens(n) {
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return n.toString();
 }
 
 // ---- 复盘 ----

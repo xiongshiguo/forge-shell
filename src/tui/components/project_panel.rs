@@ -18,6 +18,7 @@ pub struct ProjectStats {
     pub total_lines: usize,
     pub rust_files: usize,
     pub test_files: usize,
+    pub recent_files: Vec<FileInfo>,
     pub recent_commits: Vec<CommitInfo>,
     pub last_test_status: Option<String>,
     pub build_status: Option<String>,
@@ -30,6 +31,12 @@ pub struct CommitInfo {
     pub message: String,
     pub author: String,
     pub date: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    pub name: String,
+    pub lines: usize,
 }
 
 /// 收集项目统计信息
@@ -100,8 +107,17 @@ fn count_files(dir: &Path, stats: &mut ProjectStats) {
                 if name.contains("test") || path.to_string_lossy().contains("tests/") {
                     stats.test_files += 1;
                 }
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    stats.total_lines += content.lines().count();
+                let line_count = if let Ok(content) = std::fs::read_to_string(&path) {
+                    let n = content.lines().count();
+                    stats.total_lines += n;
+                    n
+                } else { 0 };
+                if stats.recent_files.len() < 10 {
+                    let rel_path = path.strip_prefix(dir).unwrap_or(&path);
+                    stats.recent_files.push(FileInfo {
+                        name: rel_path.display().to_string(),
+                        lines: line_count,
+                    });
                 }
             }
         }

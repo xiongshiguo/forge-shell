@@ -51,6 +51,9 @@ pub struct StatusResponse {
     pub max_agents: usize,
     pub memory_mb: f64,
     pub has_key: bool,
+    pub turns: u32,
+    pub total_tokens: u64,
+    pub model: String,
     pub evolution: EvolutionStatus,
 }
 
@@ -77,12 +80,20 @@ pub struct CostResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ProjectResponse {
+    pub ok: bool,
     pub name: String,
     pub file_count: usize,
     pub total_lines: usize,
     pub rust_files: usize,
     pub test_files: usize,
+    pub files: Vec<FileItem>,
     pub recent_commits: Vec<CommitItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileItem {
+    pub name: String,
+    pub lines: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1766,6 +1777,10 @@ pub async fn status_handler(
     let max_agents = state.config.lock().await.engine.max_parallel_agents;
     let evo_summary = state.evolution.lock().await.summary();
 
+    let turn = *state.session_turn.lock().await;
+    let cache = state.cache_stats.lock().await;
+    let model = state.config.lock().await.ai.default_model.clone();
+
     Json(StatusResponse {
         mode: "assist".into(),
         cost,
@@ -1774,6 +1789,9 @@ pub async fn status_handler(
         max_agents,
         memory_mb: 15.0,
         has_key: state.has_api_key,
+        turns: turn as u32,
+        total_tokens: cache.total_tokens,
+        model,
         evolution: EvolutionStatus {
             experiences: evo_summary.total_experiences,
             sops: evo_summary.sop_count,
@@ -1823,12 +1841,19 @@ pub async fn project_handler(
         date: c.date.clone(),
     }).collect();
 
+    let files: Vec<FileItem> = stats.recent_files.iter().take(10).map(|f| FileItem {
+        name: f.name.clone(),
+        lines: f.lines,
+    }).collect();
+
     Json(ProjectResponse {
+        ok: true,
         name: stats.project_name,
         file_count: stats.file_count,
         total_lines: stats.total_lines,
         rust_files: stats.rust_files,
         test_files: stats.test_files,
+        files,
         recent_commits: commits,
     })
 }

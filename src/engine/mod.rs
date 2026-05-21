@@ -7,3 +7,4 @@ pub mod router;
 pub mod mcp;
 pub mod ast_parser;
 pub mod semantic_index;
+pub mod prompt_optimizer;

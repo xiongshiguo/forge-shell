@@ -869,6 +869,13 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// 提示词优化器统计
+pub async fn prompt_stats_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    Json(state.prompt_optimizer.lock().await.stats())
+}
+
 /// 语义索引查询
 pub async fn semantic_handler(
     State(state): State<SharedState>,
@@ -1509,6 +1516,15 @@ pub async fn chat_handler(
                         }
                         evo.try_reflect();
                     }
+                }
+
+                // 记录提示词优化数据
+                {
+                    let cache = state_clone.cache_stats.lock().await;
+                    let complexity = decision.complexity.name().to_string();
+                    state_clone.prompt_optimizer.lock().await.record(
+                        "v1-full", has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
+                    );
                 }
 
                 if !has_content {

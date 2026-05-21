@@ -943,8 +943,10 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
             }
         }
         "exec" => {
-            match tokio::process::Command::new("cmd").args(["/C", arg]).output().await {
-                Ok(o) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(30),
+                tokio::process::Command::new("cmd").args(["/C", arg]).output()
+            ).await {
+                Ok(Ok(o)) => {
                     let stdout = String::from_utf8_lossy(&o.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&o.stderr).to_string();
                     if o.status.success() {
@@ -954,15 +956,18 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                             o.status.code().unwrap_or(-1), stdout, stderr)
                     }
                 }
-                Err(e) => format!("命令执行失败: {}", e),
+                Ok(Err(e)) => format!("命令执行失败: {}", e),
+                Err(_) => "命令执行超时（30秒），已中断".to_string(),
             }
         }
         "lsp" => {
-            match tokio::process::Command::new("cargo")
-                .args(["check", "--message-format=json"])
-                .output().await
+            match tokio::time::timeout(std::time::Duration::from_secs(30),
+                tokio::process::Command::new("cargo")
+                    .args(["check", "--message-format=json"])
+                    .output()
+            ).await
             {
-                Ok(o) => {
+                Ok(Ok(o)) => {
                     let stdout = String::from_utf8_lossy(&o.stdout).to_string();
                     let errors: Vec<String> = stdout.lines().filter_map(|line| {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
@@ -976,7 +981,8 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                     if errors.is_empty() { "cargo check 无错误".into() }
                     else { errors.join("\n") }
                 }
-                Err(e) => format!("cargo check 执行失败: {}", e),
+                Ok(Err(e)) => format!("cargo check 执行失败: {}", e),
+                Err(_) => "cargo check 超时（30秒），已中断".to_string(),
             }
         }
         "snap" => {
@@ -1610,11 +1616,23 @@ pub async fn chat_handler(
             }
         }
 
+        // 拉取跨轮对话历史（解决 AI 失忆问题）
+        let history = {
+            let mut hist = state_clone.conversation_history.lock().await;
+            let h = hist.clone();
+            // 保留最近 16 条消息（8 轮对话），防止上下文溢出
+            if h.len() > 16 { *hist = h[h.len()-16..].to_vec(); }
+            h
+        };
+
         // 对话上下文——工具循环会往里追加工具结果
         let mut conversation = vec![
             crate::engine::inference::ChatMessage::system(&system_msg),
-            crate::engine::inference::ChatMessage::user(&user_msg),
         ];
+        // 注入历史对话
+        conversation.extend(history);
+        // 当前用户消息
+        conversation.push(crate::engine::inference::ChatMessage::user(&user_msg));
 
         let mut has_content = false;
         let mut tool_round = 0u32;
@@ -1725,6 +1743,22 @@ pub async fn chat_handler(
             )));
 
             tool_round += 1;
+        }
+
+        // 保存本轮到对话历史
+        {
+            let mut hist = state_clone.conversation_history.lock().await;
+            hist.push(crate::engine::inference::ChatMessage::user(&req.message));
+            // 取最后一轮 assistant 回复（不含 [TOOL:xxx] 的工具调用消息）
+            for msg in conversation.iter().rev() {
+                if msg.role == "assistant" && !msg.content.contains("[TOOL:") {
+                    hist.push(msg.clone());
+                    break;
+                }
+            }
+            // 保留最近 16 条
+            let n = hist.len();
+            if n > 16 { *hist = hist.split_off(n - 16); }
         }
 
         // 发送完成

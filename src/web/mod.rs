@@ -58,6 +58,7 @@ pub struct AppState {
     pub project_fingerprint: Mutex<String>,
     pub session_turn: Mutex<usize>,
     pub session_summaries: Mutex<Vec<String>>,
+    pub conversation_history: Mutex<Vec<crate::engine::inference::ChatMessage>>,
     pub evolution: Mutex<EvolutionCoordinator>,
     pub backup: Mutex<BackupManager>,
     pub semantic_index: crate::engine::semantic_index::SemanticIndex,
@@ -88,6 +89,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         project_fingerprint: Mutex::new(String::new()),
         session_turn: Mutex::new(0),
         session_summaries: Mutex::new(Vec::new()),
+        conversation_history: Mutex::new(Vec::new()),
         evolution: Mutex::new(EvolutionCoordinator::new(
             crate::config::forge_data_dir().join("evolution")
         )),

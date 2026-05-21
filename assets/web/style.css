@@ -41,6 +41,9 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .mode-btn.active { background:var(--purple); color:white; border-color:var(--purple); }
 .topbar-right { display:flex; align-items:center; gap:12px; font-size:12px; }
 #session-end-btn { padding:3px 10px; background:var(--bg3); color:var(--text-dim); border:none; border-radius:4px; cursor:pointer; font-size:11px; }
+.nav-link { color:var(--purple-light); text-decoration:none; font-size:11px; padding:2px 6px; border-radius:3px; transition:background .2s; }
+.nav-link:hover { background:var(--bg3); }
+.version-badge { font-size:10px; color:var(--gold); background:var(--bg3); padding:2px 6px; border-radius:3px; }
 
 /* 主体三栏 */
 #main { display:flex; flex:1; overflow:hidden; min-height:0; }

@@ -33,6 +33,7 @@ pub struct InferenceClient {
     model: String,
     http: reqwest::Client,
     pub total_usage: TokenUsage,
+    max_tokens: u32,
 }
 
 impl InferenceClient {
@@ -48,7 +49,14 @@ impl InferenceClient {
             model: config.ai.default_model.clone(),
             http,
             total_usage: TokenUsage::default(),
+            max_tokens: 8192,
         })
+    }
+
+    /// 设置最大输出 token 数
+    pub fn with_max_tokens(mut self, n: u32) -> Self {
+        self.max_tokens = n;
+        self
     }
 
     /// 流式聊天（返回 SSE stream）
@@ -61,7 +69,7 @@ impl InferenceClient {
             messages,
             stream: true,
             temperature: 0.0,
-            max_tokens: 8192,
+            max_tokens: self.max_tokens,
         };
 
         let url = format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'));

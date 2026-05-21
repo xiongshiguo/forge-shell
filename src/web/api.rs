@@ -1434,6 +1434,12 @@ pub async fn chat_handler(
         } else {
             crate::system_prompt::get_system_prompt()
         };
+        // 根据复杂度动态设定输出上限（利用 DeepSeek V4 1M 上下文/128K 输出能力）
+        let max_out_tokens: u32 = match decision.complexity {
+            crate::engine::router::Complexity::Simple => 8192,
+            crate::engine::router::Complexity::Moderate => 32768,
+            crate::engine::router::Complexity::Complex => 65536,
+        };
 
         // L2: 项目指纹缓存——目录没变就不发项目信息
         let project_info = {
@@ -1477,7 +1483,7 @@ pub async fn chat_handler(
             // Pro 和 Flash 并行
             let (pro_handle, flash_handle) = tokio::join!(
                 tokio::spawn(async move {
-                    let mut client = match crate::engine::inference::InferenceClient::new(&pro_config) {
+                    let mut client = match crate::engine::inference::InferenceClient::new(&pro_config).map(|c| c.with_max_tokens(65536)) {
                         Ok(c) => c, Err(_) => return String::new(),
                     };
                     let msgs = vec![
@@ -1494,7 +1500,7 @@ pub async fn chat_handler(
                     text
                 }),
                 tokio::spawn(async move {
-                    let mut client = match crate::engine::inference::InferenceClient::new(&flash_config) {
+                    let mut client = match crate::engine::inference::InferenceClient::new(&flash_config).map(|c| c.with_max_tokens(16384)) {
                         Ok(c) => c, Err(_) => return String::new(),
                     };
                     let msgs = vec![
@@ -1605,7 +1611,7 @@ pub async fn chat_handler(
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
         loop {
-            let mut client = match crate::engine::inference::InferenceClient::new(&config) {
+            let mut client = match crate::engine::inference::InferenceClient::new(&config).map(|c| c.with_max_tokens(max_out_tokens)) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(
@@ -1678,10 +1684,14 @@ pub async fn chat_handler(
                 serde_json::json!({"type": "chunk", "content": format!("\n\n🔧 执行工具: {}\n", tool_names.join(", "))}).to_string()
             )));
 
-            // 执行工具并收集结果
+            // 执行工具并收集结果（截断过长结果，避免下轮对话溢出）
             let mut tool_results = String::new();
             for (tool, arg) in &tool_calls {
-                let result = execute_tool_inline(tool, arg).await;
+                let mut result = execute_tool_inline(tool, arg).await;
+                // 工具结果截断到 3000 字符，避免模型上下文溢出
+                if result.len() > 3000 {
+                    result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], result.len());
+                }
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
                 )));

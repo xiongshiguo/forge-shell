@@ -363,6 +363,55 @@ fn scan_project() -> String {
     info
 }
 
+/// 始终注入的轻量项目上下文（利用 DeepSeek 1M 上下文窗口）
+fn build_project_context() -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut ctx = String::new();
+
+    // 项目类型
+    let proj_type = if cwd.join("Cargo.toml").exists() { "Rust" }
+        else if cwd.join("package.json").exists() { "Node.js" }
+        else if cwd.join("go.mod").exists() { "Go" }
+        else if cwd.join("requirements.txt").exists() || cwd.join("pyproject.toml").exists() { "Python" }
+        else { "未知" };
+    ctx.push_str(&format!("项目类型: {}\n", proj_type));
+
+    // src/ 目录结构概要
+    let src_dir = cwd.join("src");
+    if src_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&src_dir) {
+            let mut mods = Vec::new();
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".rs") || name.ends_with(".ts") || name.ends_with(".js") || name.ends_with(".py") {
+                    mods.push(name);
+                }
+            }
+            if !mods.is_empty() {
+                ctx.push_str(&format!("源码模块: {}\n", mods.join(", ")));
+            }
+        }
+    }
+
+    // Git 信息
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["branch", "--show-current"]).current_dir(&cwd).output()
+    {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !branch.is_empty() { ctx.push_str(&format!("当前分支: {}\n", branch)); }
+    }
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["log", "--oneline", "-3"]).current_dir(&cwd).output()
+    {
+        let commits = String::from_utf8_lossy(&output.stdout);
+        if !commits.trim().is_empty() {
+            ctx.push_str(&format!("最近提交:\n{}", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+        }
+    }
+
+    ctx
+}
+
 fn load_context() -> String {
     let path = context_file_path();
     if path.exists() {
@@ -377,7 +426,7 @@ async fn call_with_repair(
     client: &mut crate::engine::inference::InferenceClient,
     messages: Vec<crate::engine::inference::ChatMessage>,
 ) -> Result<(String, bool), String> {
-    for attempt in 0u32..2 {
+    for attempt in 0u32..3 {
         match client.chat_stream(messages.clone()).await {
             Ok(mut stream) => {
                 use futures::StreamExt;
@@ -385,21 +434,23 @@ async fn call_with_repair(
                 while let Some(r) = stream.next().await {
                     match r {
                         Ok(c) => text.push_str(&c.content),
-                        Err(e) => if attempt == 0 { break; } else { return Err(e.to_string()); },
+                        Err(e) => if attempt < 2 { break; } else { return Err(e.to_string()); },
                     }
                 }
-                return Ok((text, true));
+                if !text.is_empty() { return Ok((text, true)); }
             }
             Err(e) => {
-                if attempt == 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                if attempt < 2 {
+                    // 指数退避: 1s → 2s → 4s
+                    let delay_ms = 1000u64 * (1u64 << attempt);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 } else {
-                    return Err(e.to_string());
+                    return Err(format!("重试3次后仍失败: {}", e));
                 }
             }
         }
     }
-    Err("重试耗尽".into())
+    Err("重试3次后无内容".into())
 }
 
 /// 检查是否已配置 API Key（动态读取，不依赖启动时快照）
@@ -1022,6 +1073,95 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                 Err(e) => format!("保存失败: {}", e),
             }
         }
+        "edit" => {
+            let parts: Vec<&str> = arg.splitn(4, ':').collect();
+            let path = parts.first().map(|s| s.trim()).unwrap_or("");
+            let start = parts.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+            let end = parts.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+            let content = parts.get(3).unwrap_or(&"");
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let full_path = cwd.join(path);
+            match std::fs::read_to_string(&full_path) {
+                Ok(original) => {
+                    // 备份
+                    let backup_dir = crate::config::forge_data_dir().join("backups");
+                    std::fs::create_dir_all(&backup_dir).ok();
+                    let safe_name = path.replace(['/', '\\'], "_");
+                    let _ = std::fs::write(backup_dir.join(format!("{}_{}.bak", safe_name, chrono::Utc::now().format("%H%M%S"))), &original);
+                    let lines: Vec<&str> = original.lines().collect();
+                    let s = start.max(1).min(lines.len());
+                    let e = if end > 0 { end.min(lines.len()) } else { s };
+                    let mut result = Vec::new();
+                    result.extend_from_slice(&lines[..s.saturating_sub(1)]);
+                    result.extend(content.lines());
+                    result.extend_from_slice(&lines[e..]);
+                    let new_content = result.join("\n");
+                    match std::fs::write(&full_path, &new_content) {
+                        Ok(()) => format!("已编辑 {} 行{}-{} → {}行结果 (共{}行)", path, s, e, content.lines().count(), result.len()),
+                        Err(e) => format!("编辑失败: {}", e),
+                    }
+                }
+                Err(e) => format!("读取 {} 失败: {}", path, e),
+            }
+        }
+        "write" => {
+            let parts: Vec<&str> = arg.splitn(2, ':').collect();
+            let path = parts.first().map(|s| s.trim()).unwrap_or("");
+            let content = parts.get(1).unwrap_or(&"");
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let full_path = cwd.join(path);
+            // 如果文件已存在，先备份
+            if full_path.exists() {
+                let backup_dir = crate::config::forge_data_dir().join("backups");
+                std::fs::create_dir_all(&backup_dir).ok();
+                let safe_name = path.replace(['/', '\\'], "_");
+                let _ = std::fs::copy(&full_path, backup_dir.join(format!("{}_{}.bak", safe_name, chrono::Utc::now().format("%H%M%S"))));
+            }
+            // 确保父目录存在
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            match std::fs::write(&full_path, content) {
+                Ok(()) => format!("已写入 {} ({} 行, {} 字节)", path, content.lines().count(), content.len()),
+                Err(e) => format!("写入失败: {}", e),
+            }
+        }
+        "glob" => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let pattern = arg;
+            let mut results = Vec::new();
+            // 简易 glob: 支持 **/*.rs, src/**/*.rs, *.toml 等
+            let (base_dir, file_pattern): (std::path::PathBuf, String) = if pattern.contains("**/") {
+                let parts: Vec<&str> = pattern.split("**/").collect();
+                (cwd.join(parts[0]), if parts.len() > 1 { parts[1].to_string() } else { "*".into() })
+            } else if pattern.contains('/') {
+                let p = std::path::Path::new(pattern);
+                (cwd.join(p.parent().unwrap_or(std::path::Path::new("."))),
+                 p.file_name().unwrap_or_default().to_string_lossy().to_string())
+            } else {
+                (cwd.clone(), pattern.to_string())
+            };
+            let ext_match = file_pattern.strip_prefix("*.").unwrap_or(&file_pattern).to_string();
+            fn collect_files(dir: &std::path::Path, ext: &str, results: &mut Vec<String>, depth: u32) {
+                if depth > 5 { return; }
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        let name = p.file_name().unwrap_or_default().to_string_lossy();
+                        if name.starts_with('.') || name == "target" || name == "node_modules" { continue; }
+                        if p.is_dir() { collect_files(&p, ext, results, depth + 1); }
+                        else if ext == "*" || name.ends_with(ext) {
+                            if let Ok(meta) = p.metadata() {
+                                results.push(format!("{} ({}行, {}B)", p.strip_prefix(&std::env::current_dir().unwrap_or_default()).unwrap_or(&p).display(), name.len(), meta.len()));
+                            }
+                        }
+                    }
+                }
+            }
+            collect_files(&base_dir, &ext_match, &mut results, 0);
+            if results.is_empty() { format!("glob '{}' 无匹配文件", pattern) }
+            else { format!("glob '{}' 找到 {} 个文件:\n{}", pattern, results.len(), results.join("\n")) }
+        }
         _ => format!("工具 {} 不支持在工具循环中自动执行", tool),
     }
 }
@@ -1473,15 +1613,16 @@ pub async fn chat_handler(
             crate::engine::router::Complexity::Complex => 65536,
         };
 
-        // L2: 项目指纹缓存——目录没变就不发项目信息
+        // L2: 项目上下文注入——利用 DeepSeek 1M 上下文能力
         let project_info = {
             let new_fp = compute_fingerprint();
             let mut old_fp = state_clone.project_fingerprint.lock().await;
+            let always_ctx = build_project_context(); // 始终注入轻量上下文
             if *old_fp == new_fp {
-                String::new() // 指纹未变，不发
+                format!("\n\n## 当前项目环境\n{}", always_ctx)
             } else {
                 *old_fp = new_fp;
-                scan_project() // 指纹变了，发
+                format!("\n\n## 当前项目环境\n{}\n{}", always_ctx, scan_project())
             }
         };
 
@@ -1654,8 +1795,10 @@ pub async fn chat_handler(
         let max_tool_rounds = 5u32;
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
+        let use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
         loop {
-            let mut client = match crate::engine::inference::InferenceClient::new(&config).map(|c| c.with_max_tokens(max_out_tokens)) {
+            let mut client = match crate::engine::inference::InferenceClient::new(&config)
+                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking)) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(

@@ -34,7 +34,9 @@ pub fn get_system_prompt() -> String {
 - [TOOL:web:搜索词] — 联网搜索
 - [TOOL:lsp] — cargo check 诊断
 - [TOOL:lsp-rich:符号名] — 深度LSP: 定义+引用+修复建议
-- [TOOL:edit:文件:起始行:结束行::新内容] — 精确行编辑
+- [TOOL:edit:文件:起始行:结束行::新内容] — 精确行编辑（自动备份）
+- [TOOL:write:文件路径:内容] — 创建或覆盖文件（自动备份原文件）
+- [TOOL:glob:pattern] — 文件模式匹配，如 src/**/*.rs
 - [TOOL:snap] — 查看快照列表
 - [TOOL:rollback] — 回滚全部修改
 - [TOOL:save:内容] — 保存跨会话记忆
@@ -105,7 +107,9 @@ pub fn get_system_prompt_compact() -> String {
 - [TOOL:web:搜索词] — 联网搜索
 - [TOOL:lsp] — cargo check诊断
 - [TOOL:lsp-rich:符号] — 深度LSP
-- [TOOL:edit:文件:起:止::内容] — 精确编辑
+- [TOOL:edit:文件:起:止::内容] — 精确编辑(自动备份)
+- [TOOL:write:路径:内容] — 创建/覆盖文件
+- [TOOL:glob:pattern] — 文件模式匹配
 - [TOOL:snap] — 快照
 - [TOOL:rollback] — 回滚全部
 - [TOOL:save:内容] — 跨会话记忆

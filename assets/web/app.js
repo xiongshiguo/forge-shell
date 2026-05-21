@@ -255,11 +255,77 @@ function parseToolCallsFallback(text) {
   }
 }
 
+// ---- Markdown 渲染 ----
+function renderMarkdown(text) {
+  if (!text) return '';
+  var html = text;
+
+  // 代码块 ```...```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+    return '<pre class="code-block"><code class="language-' + (lang||'') + '">' + escapeHtml(code.trimEnd()) + '</code></pre>';
+  });
+
+  // 行内代码 `...`
+  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+  // 粗体 **...**
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // 斜体 *...*
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+  // 无序列表 - item
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="md-list">$&</ul>');
+
+  // 表格 |...|...|
+  html = html.replace(/^\|(.+)\|$/gm, function(m) {
+    var cells = m.split('|').filter(function(c) { return c.trim(); });
+    if (cells.every(function(c) { return /^[-:]+$/.test(c.trim()); })) return ''; // 分隔行
+    return '<tr>' + cells.map(function(c) { return '<td>' + c.trim() + '</td>'; }).join('') + '</tr>';
+  });
+  html = html.replace(/(<tr>.*<\/tr>\n?)+/g, '<table class="md-table">$&</table>');
+
+  // 普通换行 → <br>
+  html = html.replace(/\n/g, '<br>');
+
+  return html;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ---- Diff 渲染 ----
+function renderDiff(original, modified) {
+  var oLines = original.split('\n');
+  var mLines = modified.split('\n');
+  var html = '<div class="diff-view">';
+  var maxLen = Math.max(oLines.length, mLines.length);
+  for (var i = 0; i < Math.min(maxLen, 30); i++) {
+    var oLine = i < oLines.length ? oLines[i] : '';
+    var mLine = i < mLines.length ? mLines[i] : '';
+    if (oLine === mLine) {
+      html += '<div class="diff-line"><span class="diff-num">' + (i+1) + '</span><span class="diff-same"> ' + escapeHtml(oLine) + '</span></div>';
+    } else {
+      if (oLine) html += '<div class="diff-line diff-removed"><span class="diff-num">' + (i+1) + '</span><span>-</span> ' + escapeHtml(oLine) + '</div>';
+      if (mLine) html += '<div class="diff-line diff-added"><span class="diff-num">' + (i+1) + '</span><span>+</span> ' + escapeHtml(mLine) + '</div>';
+    }
+  }
+  if (maxLen > 30) html += '<div class="diff-more">… 省略 ' + (maxLen - 30) + ' 行</div>';
+  html += '</div>';
+  return html;
+}
+
 // ---- 消息 ----
 function addMsg(role, text) {
   var div = document.createElement('div');
   div.className = 'message ' + role;
-  div.textContent = text;
+  if (role === 'assistant') {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.innerHTML = renderMarkdown(text);
+  }
   document.getElementById('messages').appendChild(div);
   document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
 }

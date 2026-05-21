@@ -179,6 +179,53 @@ impl AgentExecutor {
                 }
                 ToolResult { tool: tool.into(), arg: arg.into(), output, success: true }
             }
+            "web" => {
+                // Agent 内联网搜索
+                let client = match reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(12))
+                    .user_agent("ForgeShell/1.0")
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(e) => return ToolResult { tool: tool.into(), arg: arg.into(), output: e.to_string(), success: false },
+                };
+                let worker_url = "https://forgeshell.cn/api/search";
+                let mut output = String::new();
+                if let Ok(resp) = client.post(worker_url)
+                    .json(&serde_json::json!({"query": arg}))
+                    .send().await
+                {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        if let Some(results) = data["results"].as_array() {
+                            for r in results.iter().take(5) {
+                                if let Some(s) = r.as_str() { output.push_str(s); output.push('\n'); }
+                            }
+                        }
+                    }
+                }
+                if output.is_empty() { output = "搜索无结果".into(); }
+                ToolResult { tool: tool.into(), arg: arg.into(), output, success: true }
+            }
+            "glob" => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let mut results = Vec::new();
+                fn walk(dir: &std::path::Path, pattern: &str, results: &mut Vec<String>, depth: u32) {
+                    if depth > 5 { return; }
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            let name = p.file_name().unwrap_or_default().to_string_lossy();
+                            if name.starts_with('.') || name == "target" || name == "node_modules" { continue; }
+                            if p.is_dir() { walk(&p, pattern, results, depth + 1); }
+                            else if pattern == "*" || name.contains(pattern.trim_end_matches('*')) {
+                                results.push(p.display().to_string());
+                            }
+                        }
+                    }
+                }
+                walk(&cwd, arg, &mut results, 0);
+                ToolResult { tool: tool.into(), arg: arg.into(), output: format!("{} 个匹配:\n{}", results.len(), results.join("\n")), success: true }
+            }
             _ => ToolResult { tool: tool.into(), arg: arg.into(), output: format!("未知工具: {}", tool), success: false },
         }
     }

@@ -115,15 +115,54 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
   animation:spin .8s linear infinite;
 }
 
-/* 代码块渲染 */
-.message.assistant code, .message.assistant pre {
+/* Markdown 渲染 */
+.code-block {
+  background:rgba(0,0,0,0.4); border:1px solid var(--purple-glow);
+  border-radius:8px; padding:14px 16px; overflow-x:auto; margin:8px 0;
   font-family:'Cascadia Code','Fira Code',Consolas,monospace;
-  font-size:13px;
+  font-size:13px; line-height:1.5; color:var(--text);
+  position:relative;
 }
-.message.assistant pre {
-  background:rgba(0,0,0,0.3); border:1px solid var(--bg3);
-  border-radius:6px; padding:12px; overflow-x:auto; margin:8px 0;
+.code-block::before {
+  content:attr(data-lang);
+  position:absolute; top:4px; right:12px;
+  font-size:10px; color:var(--purple-light); text-transform:uppercase;
 }
+.inline-code {
+  background:rgba(124,75,240,0.15); color:var(--purple-light);
+  padding:2px 6px; border-radius:4px; font-family:'Cascadia Code','Fira Code',Consolas,monospace;
+  font-size:0.9em;
+}
+.md-list { padding-left:20px; margin:4px 0; }
+.md-list li { padding:2px 0; }
+.md-table { border-collapse:collapse; margin:8px 0; font-size:13px; width:100%; }
+.md-table td {
+  border:1px solid var(--bg3); padding:6px 10px;
+}
+.md-table tr:nth-child(even) { background:rgba(255,255,255,0.02); }
+
+/* Diff 对比视图 */
+.diff-view {
+  margin:8px 0; border:1px solid var(--bg3); border-radius:8px;
+  overflow:hidden; font-family:'Cascadia Code','Fira Code',Consolas,monospace;
+  font-size:12px; line-height:1.6;
+}
+.diff-line { display:flex; padding:1px 8px; }
+.diff-num { width:36px; color:var(--text-dim); text-align:right; margin-right:8px; flex-shrink:0; }
+.diff-same { color:var(--text-dim); }
+.diff-removed { background:rgba(248,113,113,0.12); }
+.diff-removed span:last-child { color:var(--red); }
+.diff-added { background:rgba(74,222,128,0.12); }
+.diff-added span:last-child { color:var(--green); }
+.diff-more { padding:6px 12px; color:var(--text-dim); font-size:11px; text-align:center; }
+
+/* 语法高亮（Rust 关键字等） */
+.language-rust .kw { color:#c586c0; }
+.language-rust .fn { color:#dcdcaa; }
+.language-rust .str { color:#ce9178; }
+.language-rust .cmt { color:#6a9955; }
+.language-rust .ty { color:#4ec9b0; }
+.language-rust .mac { color:#d7ba7d; }
 
 /* 右面板 */
 #right-panel { width:210px; min-width:170px; background:var(--bg2); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-left:1px solid rgba(255,255,255,0.04); overflow-y:auto; padding:12px; flex-shrink:0; }

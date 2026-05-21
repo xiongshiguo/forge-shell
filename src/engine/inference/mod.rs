@@ -34,6 +34,7 @@ pub struct InferenceClient {
     http: reqwest::Client,
     pub total_usage: TokenUsage,
     max_tokens: u32,
+    thinking_enabled: bool,
 }
 
 impl InferenceClient {
@@ -50,12 +51,19 @@ impl InferenceClient {
             http,
             total_usage: TokenUsage::default(),
             max_tokens: 8192,
+            thinking_enabled: false,
         })
     }
 
     /// 设置最大输出 token 数
     pub fn with_max_tokens(mut self, n: u32) -> Self {
         self.max_tokens = n;
+        self
+    }
+
+    /// 启用深度思考（DeepSeek V4 思维链）
+    pub fn with_thinking(mut self, enabled: bool) -> Self {
+        self.thinking_enabled = enabled;
         self
     }
 
@@ -68,8 +76,11 @@ impl InferenceClient {
             model: self.model.clone(),
             messages,
             stream: true,
-            temperature: 0.0,
+            temperature: if self.thinking_enabled { None } else { Some(0.0) },
             max_tokens: self.max_tokens,
+            thinking: if self.thinking_enabled {
+                Some(ThinkingConfig { thinking_type: "enabled".into() })
+            } else { None },
         };
 
         let url = format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'));
@@ -83,7 +94,15 @@ impl InferenceClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(ForgeError::Api(format!("API 调用失败 ({}): {}", status, text)));
+            let friendly = match status.as_u16() {
+                401 => "❌ API Key 无效，请检查配置".to_string(),
+                402 => "💰 API 额度不足，请登录 DeepSeek 平台充值".to_string(),
+                403 => "🚫 API 访问被拒，请检查 Key 权限".to_string(),
+                429 => "⏳ 请求过于频繁，请稍后再试".to_string(),
+                500..=599 => "🔧 DeepSeek 服务暂时不可用，请稍后重试".to_string(),
+                _ => format!("API 错误 ({}): {}", status, text.chars().take(200).collect::<String>()),
+            };
+            return Err(ForgeError::Api(friendly));
         }
 
         use futures::StreamExt;
@@ -174,8 +193,17 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ThinkingConfig>,
+}
+
+#[derive(Debug, Serialize)]
+struct ThinkingConfig {
+    #[serde(rename = "type")]
+    thinking_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

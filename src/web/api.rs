@@ -1190,13 +1190,19 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                     let lines: Vec<&str> = original.lines().collect();
                     let s = start.max(1).min(lines.len());
                     let e = if end > 0 { end.min(lines.len()) } else { s };
+                    let old_lines: Vec<&str> = lines[s.saturating_sub(1)..e].to_vec();
+                    let new_lines: Vec<&str> = content.lines().collect();
                     let mut result = Vec::new();
                     result.extend_from_slice(&lines[..s.saturating_sub(1)]);
-                    result.extend(content.lines());
+                    result.extend(&new_lines);
                     result.extend_from_slice(&lines[e..]);
                     let new_content = result.join("\n");
+                    // 生成 diff 摘要（前端可渲染）
+                    let diff_summary: Vec<String> = old_lines.iter().map(|l| format!("-{}", l))
+                        .chain(new_lines.iter().map(|l| format!("+{}", l)))
+                        .collect();
                     match std::fs::write(&full_path, &new_content) {
-                        Ok(()) => format!("已编辑 {} 行{}-{} → {}行结果 (共{}行)", path, s, e, content.lines().count(), result.len()),
+                        Ok(()) => format!("已编辑 {} 行{}-{}\n```diff\n{}\n```", path, s, e, diff_summary.join("\n")),
                         Err(e) => format!("编辑失败: {}", e),
                     }
                 }

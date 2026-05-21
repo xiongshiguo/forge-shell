@@ -426,6 +426,68 @@ fn build_project_context() -> String {
     ctx
 }
 
+/// 构建原生 function calling 工具定义（DeepSeek V4 OpenAI 兼容格式）
+fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
+    use crate::engine::inference::{ToolDef, ToolFunction};
+    vec![
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "read".into(),
+            description: "读取文件内容，支持指定行范围".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"start":{"type":"integer","description":"起始行"},"end":{"type":"integer","description":"结束行"}},"required":["path"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "write".into(),
+            description: "创建或覆盖文件，自动备份原文件".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"content":{"type":"string","description":"文件内容"}},"required":["path","content"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "edit".into(),
+            description: "精确编辑文件的指定行范围，自动备份".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"start":{"type":"integer"},"end":{"type":"integer"},"content":{"type":"string","description":"替换内容"}},"required":["path","start","end","content"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "search".into(),
+            description: "ripgrep 全项目代码搜索".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string","description":"搜索关键词或正则"}},"required":["pattern"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "glob".into(),
+            description: "文件模式匹配，如 src/**/*.rs 或 *.toml".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string","description":"glob 模式"}},"required":["pattern"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "exec".into(),
+            description: "执行白名单命令(cargo/git等)，30秒超时".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string","description":"shell 命令"}},"required":["command"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "web".into(),
+            description: "联网搜索最新信息".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"搜索词"}},"required":["query"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "lsp".into(),
+            description: "cargo check 代码诊断".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"file":{"type":"string","description":"可选：指定文件"}}}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "semantic".into(),
+            description: "语义索引查询，搜索函数/结构体定义和引用".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"符号名或关键词"}},"required":["query"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "snap".into(),
+            description: "查看文件快照列表".into(),
+            parameters: serde_json::json!({"type":"object","properties":{}}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "save".into(),
+            description: "保存内容到跨会话记忆".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"要记住的内容"}},"required":["content"]}),
+        }},
+    ]
+}
+
 fn load_context() -> String {
     let path = context_file_path();
     if path.exists() {
@@ -954,6 +1016,29 @@ fn urlencoding(s: &str) -> String {
 }
 
 /// 工具调用闭环内联执行器 — 在后端直接执行工具，结果回注对话
+/// 将原生 function calling 的 JSON 参数转为文本格式
+fn convert_native_args(tool: &str, json_args: &str) -> String {
+    if !json_args.starts_with('{') { return json_args.to_string(); }
+    let v: serde_json::Value = match serde_json::from_str(json_args) { Ok(v) => v, Err(_) => return json_args.to_string() };
+    match tool {
+        "read" => {
+            let path = v["path"].as_str().unwrap_or("");
+            let start = v["start"].as_u64().map(|n| n.to_string()).unwrap_or_default();
+            let end = v["end"].as_u64().map(|n| n.to_string()).unwrap_or_default();
+            if start.is_empty() { path.to_string() }
+            else { format!("{}:{}:{}", path, start, end) }
+        }
+        "write" => format!("{}:{}", v["path"].as_str().unwrap_or(""), v["content"].as_str().unwrap_or("")),
+        "edit" => format!("{}:{}:{}:{}", v["path"].as_str().unwrap_or(""), v["start"].as_u64().unwrap_or(0), v["end"].as_u64().unwrap_or(0), v["content"].as_str().unwrap_or("")),
+        "search" | "web" | "semantic" => v["query"].as_str().or(v["pattern"].as_str()).unwrap_or("").to_string(),
+        "glob" => v["pattern"].as_str().unwrap_or("").to_string(),
+        "exec" => v["command"].as_str().unwrap_or("").to_string(),
+        "lsp" => v["file"].as_str().unwrap_or("").to_string(),
+        "save" => v["content"].as_str().unwrap_or("").to_string(),
+        _ => json_args.to_string(),
+    }
+}
+
 async fn execute_tool_inline(tool: &str, arg: &str) -> String {
     match tool {
         "web" => {
@@ -1835,9 +1920,11 @@ pub async fn chat_handler(
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
         let use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
+        // 构建原生 function calling 工具定义
+        let tool_defs = build_tool_defs();
         loop {
             let mut client = match crate::engine::inference::InferenceClient::new(&config)
-                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking)) {
+                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking).with_tools(tool_defs.clone())) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(
@@ -1848,6 +1935,7 @@ pub async fn chat_handler(
             };
 
             let mut round_text = String::new();
+            let mut last_chunk_tool_calls: Vec<crate::engine::inference::AccumulatedToolCall> = Vec::new();
             let stream_result = client.chat_stream(conversation.clone()).await;
 
             match stream_result {
@@ -1862,6 +1950,10 @@ pub async fn chat_handler(
                                     let _ = tx.send(Ok(Event::default().data(
                                         serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
                                     )));
+                                }
+                                // 累积原生 tool_calls
+                                if !chunk.tool_calls.is_empty() {
+                                    last_chunk_tool_calls = chunk.tool_calls;
                                 }
                             }
                             Err(e) => {
@@ -1886,17 +1978,34 @@ pub async fn chat_handler(
             }
             // stream 已 drop，client 不再被借用
 
-            // 解析工具调用
-            let tool_calls: Vec<(String, String)> = round_text
-                .lines()
-                .filter_map(|line| {
-                    let line = line.trim();
-                    if line.starts_with("[TOOL:") {
-                        let inner = line.trim_start_matches("[TOOL:").trim_end_matches(']');
-                        let parts: Vec<&str> = inner.splitn(2, ':').collect();
-                        Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string()).unwrap_or_default()))
-                    } else { None }
-                }).collect();
+            // 解析工具调用：优先原生 tool_calls，文本 [TOOL:xxx] 兜底
+            let native_tool_calls: Vec<(String, String)> = last_chunk_tool_calls.iter()
+                .filter(|tc| !tc.name.is_empty())
+                .map(|tc| {
+                    let text_arg = convert_native_args(&tc.name, &tc.arguments);
+                    (tc.name.clone(), text_arg)
+                })
+                .collect();
+
+            let tool_calls: Vec<(String, String)> = if !native_tool_calls.is_empty() {
+                // 原生 function calling 结果
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "chunk", "content": format!("\n🤖 原生调用: {}\n", native_tool_calls.iter().map(|(n,_)| n.clone()).collect::<Vec<_>>().join(", "))}).to_string()
+                )));
+                native_tool_calls
+            } else {
+                // 文本 [TOOL:xxx] 兜底
+                round_text
+                    .lines()
+                    .filter_map(|line| {
+                        let line = line.trim();
+                        if line.starts_with("[TOOL:") {
+                            let inner = line.trim_start_matches("[TOOL:").trim_end_matches(']');
+                            let parts: Vec<&str> = inner.splitn(2, ':').collect();
+                            Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string()).unwrap_or_default()))
+                        } else { None }
+                    }).collect()
+            };
 
             if tool_calls.is_empty() || tool_round >= max_tool_rounds {
                 break; // 无工具调用或达到最大轮次

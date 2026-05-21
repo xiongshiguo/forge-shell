@@ -19,11 +19,20 @@ pub struct TokenUsage {
     pub cache_hit_rate: f64,
 }
 
-/// SSE 流式 chunk
+/// SSE 流式 chunk（含原生 tool_calls）
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
     pub content: String,
     pub finish_reason: Option<String>,
+    /// 累积的 tool_calls（从 SSE delta 拼接）
+    pub tool_calls: Vec<AccumulatedToolCall>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccumulatedToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 /// 推理客户端
@@ -35,6 +44,10 @@ pub struct InferenceClient {
     pub total_usage: TokenUsage,
     max_tokens: u32,
     thinking_enabled: bool,
+    /// 原生 tool_calls 累积器（按 index 分组）
+    tool_acc: std::collections::HashMap<u32, AccumulatedToolCall>,
+    /// 工具定义列表（发送给 API）
+    tools: Option<Vec<ToolDef>>,
 }
 
 impl InferenceClient {
@@ -52,6 +65,8 @@ impl InferenceClient {
             total_usage: TokenUsage::default(),
             max_tokens: 8192,
             thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(),
+            tools: None,
         })
     }
 
@@ -67,11 +82,19 @@ impl InferenceClient {
         self
     }
 
+    /// 设置原生 function calling 工具定义
+    pub fn with_tools(mut self, tools: Vec<ToolDef>) -> Self {
+        self.tools = Some(tools);
+        self
+    }
+
     /// 流式聊天（返回 SSE stream）
     pub async fn chat_stream(
         &mut self,
         messages: Vec<ChatMessage>,
     ) -> Result<impl Stream<Item = Result<StreamChunk, ForgeError>>, ForgeError> {
+        self.tool_acc.clear();
+        let tool_choice = if self.tools.is_some() { Some("auto".to_string()) } else { None };
         let body = ChatRequest {
             model: self.model.clone(),
             messages,
@@ -81,6 +104,8 @@ impl InferenceClient {
             thinking: if self.thinking_enabled {
                 Some(ThinkingConfig { thinking_type: "enabled".into() })
             } else { None },
+            tools: self.tools.clone(),
+            tool_choice,
         };
 
         let url = format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'));
@@ -117,7 +142,7 @@ impl InferenceClient {
         Ok(stream)
     }
 
-    /// 解析 SSE 数据行（含缓存命中统计）
+    /// 解析 SSE 数据行（含缓存命中统计 + 原生 tool_calls）
     fn parse_sse_line(&mut self, text: &str) -> Result<StreamChunk, ForgeError> {
         let mut content = String::new();
         let mut finish_reason = None;
@@ -137,6 +162,18 @@ impl InferenceClient {
                         for choice in choices {
                             if let Some(delta) = choice["delta"]["content"].as_str() {
                                 content.push_str(delta);
+                            }
+                            // 捕获原生 tool_calls
+                            if let Some(tc_array) = choice["delta"]["tool_calls"].as_array() {
+                                for tc in tc_array {
+                                    let idx = tc["index"].as_u64().unwrap_or(0) as u32;
+                                    let entry = self.tool_acc.entry(idx).or_insert_with(|| AccumulatedToolCall {
+                                        id: String::new(), name: String::new(), arguments: String::new(),
+                                    });
+                                    if let Some(id) = tc["id"].as_str() { entry.id = id.to_string(); }
+                                    if let Some(name) = tc["function"]["name"].as_str() { entry.name = name.to_string(); }
+                                    if let Some(args) = tc["function"]["arguments"].as_str() { entry.arguments.push_str(args); }
+                                }
                             }
                             if let Some(reason) = choice["finish_reason"].as_str() {
                                 finish_reason = Some(reason.to_string());
@@ -166,7 +203,14 @@ impl InferenceClient {
             }
         }
 
-        Ok(StreamChunk { content, finish_reason })
+        // 刷新累积的 tool_calls
+        let tool_calls: Vec<AccumulatedToolCall> = if finish_reason.is_some() {
+            let mut tcs: Vec<_> = self.tool_acc.drain().map(|(_, v)| v).collect();
+            tcs.sort_by_key(|t| t.id.clone());
+            tcs
+        } else { Vec::new() };
+
+        Ok(StreamChunk { content, finish_reason, tool_calls })
     }
 
     /// 获取累计 Token 用量
@@ -198,6 +242,10 @@ struct ChatRequest {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ToolDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,20 +254,67 @@ struct ThinkingConfig {
     thinking_type: String,
 }
 
+// -- 原生函数调用（DeepSeek V4 OpenAI 兼容格式） --
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolDef {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: ToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value, // JSON Schema
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub tool_calls: Option<Vec<ToolCallDelta>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_type: Option<String>,
+    pub function: Option<ToolCallFunc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 impl ChatMessage {
     pub fn system(content: &str) -> Self {
-        Self { role: "system".into(), content: content.into() }
+        Self { role: "system".into(), content: content.into(), tool_calls: None, tool_call_id: None }
     }
     pub fn user(content: &str) -> Self {
-        Self { role: "user".into(), content: content.into() }
+        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None }
     }
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".into(), content: content.into() }
+        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None }
+    }
+    pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
+        Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None }
     }
 }

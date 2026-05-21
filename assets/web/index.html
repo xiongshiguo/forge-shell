@@ -75,22 +75,52 @@
     <!-- 右：工作台 -->
     <aside id="right-panel">
       <div class="panel-section">
-        <div class="panel-header">🔧 工具</div>
-        <div id="tools-grid">
-          <button class="tool-chip" onclick="var a=prompt('命令：cargo test');if(a)executeTool('exec',a)">exec</button>
-          <button class="tool-chip" onclick="var a=prompt('文件路径：src/main.rs');if(a)executeTool('read',a)">read</button>
-          <button class="tool-chip" onclick="var a=prompt('搜索关键词：fn main');if(a)executeTool('search',a)">search</button>
-          <button class="tool-chip" onclick="var a=prompt('联网搜索：Rust async await');if(a)executeTool('web',a)">web</button>
-          <button class="tool-chip" onclick="executeTool('lsp', '')">lsp</button>
-          <button class="tool-chip" onclick="executeTool('auto-fix', '')">fix</button>
-          <button class="tool-chip" onclick="executeTool('rollback', '')">↩</button>
-          <button class="tool-chip" onclick="executeTool('edit', prompt('文件:行号:结束行::内容'))">edit</button>
-          <button class="tool-chip" onclick="executeTool('snap', '')">snap</button>
-          <button class="tool-chip" onclick="executeTool('infer', prompt('函数名：'))">infer</button>
-          <button class="tool-chip" onclick="executeTool('structure', '')">struct</button>
-          <button class="tool-chip" onclick="executeTool('parallel', prompt('文件列表(逗号分隔)：'))">parallel</button>
-          <button class="tool-chip" onclick="executeTool('explore', '')">explore</button>
-          <button class="tool-chip" onclick="executeTool('save', prompt('记忆内容：'))">save</button>
+        <div class="panel-header">🔧 工具面板</div>
+        <div class="tool-list">
+          <div class="tool-row" onclick="var a=prompt('命令：cargo test');if(a)executeTool('exec',a)" title="运行 cargo/git 白名单命令">
+            <span class="tool-name">▶ 执行</span><span class="tool-hint">运行命令</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('文件路径：src/main.rs');if(a)executeTool('read',a)" title="读取文件内容（支持行范围）">
+            <span class="tool-name">📄 读取</span><span class="tool-hint">查看文件</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('搜索关键词：fn main');if(a)executeTool('search',a)" title="ripgrep 全项目搜索">
+            <span class="tool-name">🔍 搜索</span><span class="tool-hint">全项目搜</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('联网搜索：Rust async');if(a)executeTool('web',a)" title="GitHub + Gitee + DuckDuckGo">
+            <span class="tool-name">🌐 联网</span><span class="tool-hint">查资料</span>
+          </div>
+          <div class="tool-row" onclick="executeTool('lsp', '')" title="Tree-sitter AST + cargo check">
+            <span class="tool-name">🔬 检查</span><span class="tool-hint">代码诊断</span>
+          </div>
+          <div class="tool-row" onclick="executeTool('auto-fix', '')" title="测试失败→根因分析→自动修复(3轮)">
+            <span class="tool-name">🔧 修复</span><span class="tool-hint">自动修bug</span>
+          </div>
+          <div class="tool-row" onclick="executeTool('explore', '')" title="扫描项目文档/提交/类型">
+            <span class="tool-name">🗺 探查</span><span class="tool-hint">了解项目</span>
+          </div>
+          <div class="tool-sep"></div>
+          <div class="tool-row" onclick="var a=prompt('文件:行号:行号::新内容');if(a)executeTool('edit',a)" title="精确编辑指定行">
+            <span class="tool-name">✏ 编辑</span><span class="tool-hint">精确修改</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('文件1,文件2,文件3');if(a)executeTool('parallel',a)" title="并行读取多个文件">
+            <span class="tool-name">⚡ 并行</span><span class="tool-hint">多文件同读</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('函数名');if(a)executeTool('infer',a)" title="分析函数签名/调用链/复杂度">
+            <span class="tool-name">🧠 推理</span><span class="tool-hint">符号分析</span>
+          </div>
+          <div class="tool-row" onclick="executeTool('structure', '')" title="生成项目模块结构图">
+            <span class="tool-name">🏗 结构</span><span class="tool-hint">模块图</span>
+          </div>
+          <div class="tool-sep"></div>
+          <div class="tool-row" onclick="executeTool('snap', '')" title="查看/回滚文件级快照">
+            <span class="tool-name">📸 快照</span><span class="tool-hint">版本回溯</span>
+          </div>
+          <div class="tool-row" onclick="executeTool('rollback', '')" title="回滚本次会话全部修改">
+            <span class="tool-name">↩ 回滚</span><span class="tool-hint">撤销全部</span>
+          </div>
+          <div class="tool-row" onclick="var a=prompt('要记住的内容：');if(a)executeTool('save',a)" title="保存到 FORGESHELL_CONTEXT.md">
+            <span class="tool-name">💾 记忆</span><span class="tool-hint">跨会话保存</span>
+          </div>
         </div>
       </div>
 

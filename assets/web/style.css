@@ -83,6 +83,13 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .tool-chip { padding:3px 8px; background:var(--bg3); color:var(--text-dim); border:1px solid transparent; border-radius:4px; cursor:pointer; font-size:11px; }
 .tool-chip:hover { border-color:var(--purple-light); color:var(--text); }
 
+.tool-list { display:flex; flex-direction:column; gap:1px; }
+.tool-row { display:flex; align-items:center; justify-content:space-between; padding:5px 8px; border-radius:4px; cursor:pointer; transition:all .15s; }
+.tool-row:hover { background:var(--bg3); }
+.tool-name { font-size:12px; color:var(--text); white-space:nowrap; }
+.tool-hint { font-size:10px; color:var(--text-dim); margin-left:8px; white-space:nowrap; }
+.tool-sep { height:1px; background:var(--bg3); margin:2px 0; }
+
 /* 底部栏 */
 #bottombar { padding:8px 16px; background:var(--bg2); border-top:1px solid var(--bg3); flex-shrink:0; }
 .input-wrapper { display:flex; gap:8px; }

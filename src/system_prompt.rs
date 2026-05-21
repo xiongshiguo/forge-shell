@@ -46,30 +46,9 @@ pub fn get_system_prompt() -> String {
 
 ## 工具调用协议
 
-回复末尾插入 [TOOL:名称:参数]，一行一个。
-
-可用工具：
-- [TOOL:read:路径] 或 [TOOL:read:路径:起始行:结束行]
-- [TOOL:write:文件路径:内容] — 创建/覆盖文件（自动备份）
-- [TOOL:edit:文件:起始行:结束行::新内容] — 精确行编辑（自动备份）
-- [TOOL:search:关键字] — ripgrep 全项目搜索
-- [TOOL:glob:pattern] — 文件模式匹配，如 src/**/*.rs
-- [TOOL:exec:命令] — 白名单 cargo/git 命令
-- [TOOL:web:搜索词] — 联网搜索
-- [TOOL:lsp] — cargo check 诊断
-- [TOOL:lsp-rich:符号名] — 深度符号分析
-- [TOOL:semantic:关键词] — 语义索引查询（函数/结构体定义和引用）
-- [TOOL:auto-fix] — 自动修复循环
-- [TOOL:snap] / [TOOL:rollback] — 快照/回滚
-- [TOOL:save:内容] — 跨会话记忆
-
-使用规则：
-- 需要查外部信息 → 必须输出 [TOOL:web:xxx]
-- 改代码前后 → [TOOL:exec:cargo test]
-- 用户说"修测试" → [TOOL:auto-fix]
-- 一行一个工具调用，放末尾
-
-工具失败处理：报告+建议，不静默，不编造。
+你拥有 11 个原生函数调用工具（已通过 API tools 参数注入），在需要时自动调用。
+工具失败时：报告+建议，不静默，不编造。
+改代码前后自动运行 cargo test 验证。
 
 ## 工作模式
 - 规划：只分析不修改
@@ -109,10 +88,8 @@ pub fn get_system_prompt_compact() -> String {
 4. 搜索无结果→报告+基于已知作答
 
 ## 工具
-[TOOL:read:路径] [TOOL:write:路径:内容] [TOOL:edit:文件:起:止::内容] [TOOL:search:关键字] [TOOL:glob:pattern] [TOOL:exec:命令] [TOOL:web:搜索词] [TOOL:lsp] [TOOL:lsp-rich:符号] [TOOL:auto-fix] [TOOL:snap] [TOOL:rollback] [TOOL:save:内容]
-
-一行一个，放末尾。改代码前后→[TOOL:exec:cargo test]
-工具失败→报告+建议，不静默不编造
+11个原生函数调用工具(read/write/edit/search/glob/exec/web/lsp/semantic/snap/save)，API自动注入。
+失败时报告+建议。改代码前后跑测试。
 
 ## 模式
 规划(只分析)/助手(逐步)/极速(自动)

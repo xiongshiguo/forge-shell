@@ -1979,6 +1979,7 @@ pub async fn chat_handler(
             // stream 已 drop，client 不再被借用
 
             // 解析工具调用：优先原生 tool_calls，文本 [TOOL:xxx] 兜底
+            let was_native = !last_chunk_tool_calls.is_empty();
             let native_tool_calls: Vec<(String, String)> = last_chunk_tool_calls.iter()
                 .filter(|tc| !tc.name.is_empty())
                 .map(|tc| {
@@ -2030,6 +2031,9 @@ pub async fn chat_handler(
                 .filter(|(t, _)| matches!(t.as_str(), "edit" | "write" | "exec" | "save" | "rollback" | "auto-fix"))
                 .collect();
 
+            // 收集每个工具的执行结果（单条记录，便于原生格式回注）
+            let mut tool_results: Vec<(String, String)> = Vec::new(); // (tool, result_text)
+
             // 并行执行只读工具
             let ro_futures: Vec<_> = read_only_tools.iter().map(|(tool, arg)| {
                 let t = tool.to_string();
@@ -2037,7 +2041,6 @@ pub async fn chat_handler(
                 tokio::spawn(async move { (t.clone(), a.clone(), execute_tool_inline(&t, &a).await) })
             }).collect();
 
-            let mut tool_results = String::new();
             for f in ro_futures {
                 if let Ok((tool, arg, mut result)) = f.await {
                     let full_len = result.len();
@@ -2051,7 +2054,7 @@ pub async fn chat_handler(
                     let _ = tx.send(Ok(Event::default().data(
                         serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
                     )));
-                    tool_results.push_str(&format!("\n--- 工具 {} 执行结果 ---\n{}\n", tool, result));
+                    tool_results.push((tool.clone(), result));
                 }
             }
 
@@ -2069,14 +2072,41 @@ pub async fn chat_handler(
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
                 )));
-                tool_results.push_str(&format!("\n--- 工具 {} 执行结果 ---\n{}\n", tool, result));
+                tool_results.push(((*tool).clone(), result));
             }
 
             // 将本轮回复和工具结果追加到对话
-            conversation.push(crate::engine::inference::ChatMessage::assistant(&round_text));
-            conversation.push(crate::engine::inference::ChatMessage::user(&format!(
-                "你刚才调用了工具，以下是执行结果。请基于这些结果继续回答用户：\n{}", tool_results
-            )));
+            if was_native {
+                // 原生格式：assistant 带 tool_calls + 逐条 tool 结果带 tool_call_id
+                let tc_deltas: Vec<crate::engine::inference::ToolCallDelta> = last_chunk_tool_calls.iter().map(|tc| {
+                    crate::engine::inference::ToolCallDelta {
+                        id: Some(tc.id.clone()),
+                        call_type: Some("function".into()),
+                        function: Some(crate::engine::inference::ToolCallFunc {
+                            name: Some(tc.name.clone()),
+                            arguments: Some(tc.arguments.clone()),
+                        }),
+                        index: None,
+                    }
+                }).collect();
+                let mut asst_msg = crate::engine::inference::ChatMessage::assistant(&round_text);
+                asst_msg.tool_calls = Some(tc_deltas);
+                conversation.push(asst_msg);
+                // 逐条 tool 结果
+                for (i, (tool_name, result)) in tool_results.iter().enumerate() {
+                    let call_id = last_chunk_tool_calls.get(i).map(|tc| tc.id.clone()).unwrap_or_default();
+                    conversation.push(crate::engine::inference::ChatMessage::tool_result(&call_id, result));
+                }
+            } else {
+                // 文本 [TOOL:xxx] 格式：传统方式
+                conversation.push(crate::engine::inference::ChatMessage::assistant(&round_text));
+                let combined = tool_results.iter()
+                    .map(|(t, r)| format!("\n--- 工具 {} 执行结果 ---\n{}\n", t, r))
+                    .collect::<Vec<_>>().join("");
+                conversation.push(crate::engine::inference::ChatMessage::user(&format!(
+                    "你刚才调用了工具，以下是执行结果。请基于这些结果继续回答用户：\n{}", combined
+                )));
+            }
 
             tool_round += 1;
         }
@@ -2085,9 +2115,11 @@ pub async fn chat_handler(
         {
             let mut hist = state_clone.conversation_history.lock().await;
             hist.push(crate::engine::inference::ChatMessage::user(&req.message));
-            // 取最后一轮 assistant 回复（不含 [TOOL:xxx] 的工具调用消息）
+            // 取最后一轮 assistant 回复（不含工具调用的消息）
             for msg in conversation.iter().rev() {
-                if msg.role == "assistant" && !msg.content.contains("[TOOL:") {
+                if msg.role == "assistant"
+                    && !msg.content.contains("[TOOL:")
+                    && msg.tool_calls.is_none() {
                     hist.push(msg.clone());
                     break;
                 }

@@ -405,7 +405,21 @@ fn build_project_context() -> String {
     {
         let commits = String::from_utf8_lossy(&output.stdout);
         if !commits.trim().is_empty() {
-            ctx.push_str(&format!("最近提交:\n{}", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+            ctx.push_str(&format!("最近提交:\n{}\n", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+        }
+    }
+
+    // 深度注入：关键配置文件内容（控制总注入量 <20K tokens）
+    let key_files = ["Cargo.toml", "package.json", "README.md", ".claude/settings.json"];
+    for fname in &key_files {
+        let p = cwd.join(fname);
+        if p.exists() {
+            if let Ok(content) = std::fs::read_to_string(&p) {
+                let truncated: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
+                if truncated.len() < 5000 {
+                    ctx.push_str(&format!("\n### {} 内容:\n```\n{}\n```\n", fname, truncated));
+                }
+            }
         }
     }
 
@@ -1126,6 +1140,31 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                 Err(e) => format!("写入失败: {}", e),
             }
         }
+        "semantic" => {
+            // 查询语义索引（函数/结构体/枚举定义和引用）
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let index = crate::engine::semantic_index::SemanticIndex::new(cwd);
+            if arg.is_empty() {
+                "语义索引：请提供查询关键词或符号名，如 [TOOL:semantic:main] 或 [TOOL:semantic:函数名]".into()
+            } else {
+                let by_kind = index.query_by_kind(arg);
+                let fuzzy = index.fuzzy_search(arg);
+                if by_kind.is_empty() && fuzzy.is_empty() {
+                    format!("语义索引中未找到与 '{}' 相关的符号", arg)
+                } else {
+                    let mut out = String::new();
+                    if !by_kind.is_empty() {
+                        out.push_str(&format!("## 类型匹配 ({} 条)\n", by_kind.len()));
+                        for s in &by_kind { out.push_str(&format!("- {}:{} {} {}\n", s.file, s.line, s.kind, s.name)); }
+                    }
+                    if !fuzzy.is_empty() {
+                        out.push_str(&format!("\n## 模糊匹配 ({} 条)\n", fuzzy.len()));
+                        for s in &fuzzy { out.push_str(&format!("- {}:{} {} {}\n", s.file, s.line, s.kind, s.name)); }
+                    }
+                    out
+                }
+            }
+        }
         "glob" => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let pattern = arg;
@@ -1598,19 +1637,19 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}模式，预计¥{:.4})", decision.model, label, mode, decision.estimated_cost)}).to_string()
         )));
-        // 根据模型选择提示词：Flash 用精简版，Pro 用完整版
+        // UCB1 提示词优化器：运行时选择最优变体
+        let system_variant = state_clone.prompt_optimizer.lock().await.select_best();
         let is_flash = decision.model.contains("flash");
-        let system_variant = if is_flash { "v2-compact" } else { "v1-full" };
         let system_msg = if is_flash {
             crate::system_prompt::get_system_prompt_compact()
         } else {
             crate::system_prompt::get_system_prompt()
         };
-        // 根据复杂度动态设定输出上限（利用 DeepSeek V4 1M 上下文/128K 输出能力）
+        // 根据复杂度动态设定输出上限（DeepSeek V4 最大输出 384K）
         let max_out_tokens: u32 = match decision.complexity {
-            crate::engine::router::Complexity::Simple => 8192,
-            crate::engine::router::Complexity::Moderate => 32768,
-            crate::engine::router::Complexity::Complex => 65536,
+            crate::engine::router::Complexity::Simple => 16384,
+            crate::engine::router::Complexity::Moderate => 65536,
+            crate::engine::router::Complexity::Complex => 196608,
         };
 
         // L2: 项目上下文注入——利用 DeepSeek 1M 上下文能力
@@ -1874,17 +1913,47 @@ pub async fn chat_handler(
                 serde_json::json!({"type": "chunk", "content": format!("\n\n🔧 执行 {} 个工具…\n", tool_calls.len())}).to_string()
             )));
 
-            // 执行工具并收集结果（截断过长结果，避免下轮对话溢出）
+            // 执行工具：只读工具并行，写工具串行
+            let read_only_tools: Vec<_> = tool_calls.iter()
+                .filter(|(t, _)| matches!(t.as_str(), "read" | "search" | "web" | "lsp" | "lsp-rich" | "snap" | "glob" | "semantic"))
+                .collect();
+            let write_tools: Vec<_> = tool_calls.iter()
+                .filter(|(t, _)| matches!(t.as_str(), "edit" | "write" | "exec" | "save" | "rollback" | "auto-fix"))
+                .collect();
+
+            // 并行执行只读工具
+            let ro_futures: Vec<_> = read_only_tools.iter().map(|(tool, arg)| {
+                let t = tool.to_string();
+                let a = arg.to_string();
+                tokio::spawn(async move { (t.clone(), a.clone(), execute_tool_inline(&t, &a).await) })
+            }).collect();
+
             let mut tool_results = String::new();
-            for (tool, arg) in &tool_calls {
+            for f in ro_futures {
+                if let Ok((tool, arg, mut result)) = f.await {
+                    let full_len = result.len();
+                    if result.len() > 3000 {
+                        result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], full_len);
+                    }
+                    let summary = if result.len() > 100 { format!("{}…", &result[..100]) } else { result.clone() };
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
+                    )));
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
+                    )));
+                    tool_results.push_str(&format!("\n--- 工具 {} 执行结果 ---\n{}\n", tool, result));
+                }
+            }
+
+            // 串行执行写工具（保证安全顺序）
+            for (tool, arg) in &write_tools {
                 let mut result = execute_tool_inline(tool, arg).await;
-                // 工具结果截断到 3000 字符，避免模型上下文溢出
                 let full_len = result.len();
                 if result.len() > 3000 {
                     result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], full_len);
                 }
                 let summary = if result.len() > 100 { format!("{}…", &result[..100]) } else { result.clone() };
-                // 发送结构化工具结果事件
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
                 )));
@@ -1958,7 +2027,7 @@ pub async fn chat_handler(
             let cache = state_clone.cache_stats.lock().await;
             let complexity = decision.complexity.name().to_string();
             state_clone.prompt_optimizer.lock().await.record(
-                system_variant, has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
+                &system_variant, has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
             );
         }
 

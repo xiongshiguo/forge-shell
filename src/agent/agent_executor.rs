@@ -230,3 +230,34 @@ impl AgentExecutor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_result_construction() {
+        let r = ToolResult { tool: "read".into(), arg: "test.rs".into(), output: "line 1".into(), success: true };
+        assert!(r.success);
+        assert_eq!(r.tool, "read");
+    }
+
+    #[test]
+    fn test_agent_executor_new() {
+        let config = crate::config::Config::default();
+        let executor = AgentExecutor::new(config);
+        assert_eq!(executor.max_rounds, 3);
+    }
+
+    #[test]
+    fn test_agent_result_fields() {
+        let result = AgentResult {
+            final_output: "done".into(),
+            tools_used: vec![],
+            rounds: 2,
+        };
+        assert_eq!(result.rounds, 2);
+        assert_eq!(result.final_output, "done");
+        assert!(result.tools_used.is_empty());
+    }
+}

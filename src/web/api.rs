@@ -1935,6 +1935,7 @@ pub async fn chat_handler(
             };
 
             let mut round_text = String::new();
+            let mut round_reasoning = String::new();
             let mut last_chunk_tool_calls: Vec<crate::engine::inference::AccumulatedToolCall> = Vec::new();
             let stream_result = client.chat_stream(conversation.clone()).await;
 
@@ -1950,6 +1951,10 @@ pub async fn chat_handler(
                                     let _ = tx.send(Ok(Event::default().data(
                                         serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
                                     )));
+                                }
+                                // 累积 reasoning_content（thinking 模式必须回传）
+                                if !chunk.reasoning_content.is_empty() {
+                                    round_reasoning.push_str(&chunk.reasoning_content);
                                 }
                                 // 累积原生 tool_calls
                                 if !chunk.tool_calls.is_empty() {
@@ -2089,7 +2094,7 @@ pub async fn chat_handler(
                         index: None,
                     }
                 }).collect();
-                let mut asst_msg = crate::engine::inference::ChatMessage::assistant(&round_text);
+                let mut asst_msg = crate::engine::inference::ChatMessage::assistant_with_reasoning(&round_text, &round_reasoning);
                 asst_msg.tool_calls = Some(tc_deltas);
                 conversation.push(asst_msg);
                 // 逐条 tool 结果
@@ -2099,7 +2104,7 @@ pub async fn chat_handler(
                 }
             } else {
                 // 文本 [TOOL:xxx] 格式：传统方式
-                conversation.push(crate::engine::inference::ChatMessage::assistant(&round_text));
+                conversation.push(crate::engine::inference::ChatMessage::assistant_with_reasoning(&round_text, &round_reasoning));
                 let combined = tool_results.iter()
                     .map(|(t, r)| format!("\n--- 工具 {} 执行结果 ---\n{}\n", t, r))
                     .collect::<Vec<_>>().join("");

@@ -19,13 +19,15 @@ pub struct TokenUsage {
     pub cache_hit_rate: f64,
 }
 
-/// SSE 流式 chunk（含原生 tool_calls）
+/// SSE 流式 chunk（含原生 tool_calls + reasoning）
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
     pub content: String,
     pub finish_reason: Option<String>,
     /// 累积的 tool_calls（从 SSE delta 拼接）
     pub tool_calls: Vec<AccumulatedToolCall>,
+    /// DeepSeek V4 thinking 推理内容（必须回传）
+    pub reasoning_content: String,
 }
 
 #[derive(Debug, Clone)]
@@ -142,10 +144,11 @@ impl InferenceClient {
         Ok(stream)
     }
 
-    /// 解析 SSE 数据行（含缓存命中统计 + 原生 tool_calls）
+    /// 解析 SSE 数据行（含缓存命中统计 + 原生 tool_calls + reasoning_content）
     fn parse_sse_line(&mut self, text: &str) -> Result<StreamChunk, ForgeError> {
         let mut content = String::new();
         let mut finish_reason = None;
+        let mut reasoning = String::new();
 
         for line in text.lines() {
             let line = line.trim();
@@ -162,6 +165,10 @@ impl InferenceClient {
                         for choice in choices {
                             if let Some(delta) = choice["delta"]["content"].as_str() {
                                 content.push_str(delta);
+                            }
+                            // 捕获 reasoning_content（DeepSeek V4 thinking 模式，必须回传）
+                            if let Some(rc) = choice["delta"]["reasoning_content"].as_str() {
+                                reasoning.push_str(rc);
                             }
                             // 捕获原生 tool_calls
                             if let Some(tc_array) = choice["delta"]["tool_calls"].as_array() {
@@ -210,7 +217,7 @@ impl InferenceClient {
             tcs
         } else { Vec::new() };
 
-        Ok(StreamChunk { content, finish_reason, tool_calls })
+        Ok(StreamChunk { content, finish_reason, tool_calls, reasoning_content: reasoning })
     }
 
     /// 获取累计 Token 用量
@@ -282,6 +289,10 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub tool_call_id: Option<String>,
+    /// DeepSeek V4 thinking 模式的推理内容（必须回传）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,15 +317,18 @@ pub struct ToolCallFunc {
 
 impl ChatMessage {
     pub fn system(content: &str) -> Self {
-        Self { role: "system".into(), content: content.into(), tool_calls: None, tool_call_id: None }
+        Self { role: "system".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
     pub fn user(content: &str) -> Self {
-        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None }
+        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None }
+        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
+    }
+    pub fn assistant_with_reasoning(content: &str, reasoning: &str) -> Self {
+        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning.into()) } }
     }
     pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
-        Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None }
+        Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None, reasoning_content: None }
     }
 }

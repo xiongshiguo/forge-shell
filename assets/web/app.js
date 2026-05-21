@@ -60,11 +60,27 @@ function showMainUI() {
   setupSend();
   syncVersion();
   setupReview();
-  addMsg('system', '🔥 熔炉已就绪');
   loadFileTree();
   checkUpdate();
   refreshRight();
   setInterval(refreshRight, 5000);
+  loadLatestSession();
+}
+
+async function loadLatestSession() {
+  try {
+    var r = await fetch('/api/session/latest');
+    var d = await r.json();
+    if (d.ok && d.session && d.session.messages && d.session.messages.length) {
+      var msgs = d.session.messages;
+      for (var i = 0; i < msgs.length; i++) {
+        addMsg(msgs[i].role, msgs[i].content);
+      }
+      addMsg('system', '📂 已恢复上次会话 (' + (d.session.date || '') + '，' + msgs.length + ' 条消息)');
+      return;
+    }
+  } catch(e) {}
+  addMsg('system', '🔥 熔炉已就绪');
 }
 
 function setupModes() {

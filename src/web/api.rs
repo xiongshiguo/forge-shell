@@ -706,6 +706,21 @@ pub async fn session_save_handler(
     Json(serde_json::json!({"ok": true, "id": session_id, "experiences": summary.total_experiences, "sops": summary.sop_count}))
 }
 
+/// 获取当前会话（启动时自动恢复历史对话）
+pub async fn session_latest_handler() -> Json<serde_json::Value> {
+    let dir = crate::config::forge_data_dir().join("sessions");
+    let path = dir.join("latest.json");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(session) => Json(serde_json::json!({"ok": true, "session": session})),
+                Err(_) => Json(serde_json::json!({"ok": false, "error": "parse failed"})),
+            }
+        }
+        Err(_) => Json(serde_json::json!({"ok": false, "messages": []})),
+    }
+}
+
 /// 获取会话列表
 pub async fn sessions_list_handler() -> Json<serde_json::Value> {
     let dir = crate::config::forge_data_dir().join("sessions");
@@ -1745,7 +1760,7 @@ pub async fn chat_handler(
             tool_round += 1;
         }
 
-        // 保存本轮到对话历史
+        // 保存本轮到对话历史（内存 + 磁盘）
         {
             let mut hist = state_clone.conversation_history.lock().await;
             hist.push(crate::engine::inference::ChatMessage::user(&req.message));
@@ -1759,6 +1774,20 @@ pub async fn chat_handler(
             // 保留最近 16 条
             let n = hist.len();
             if n > 16 { *hist = hist.split_off(n - 16); }
+
+            // 落盘：每次对话自动保存，重启可恢复
+            let dir = crate::config::forge_data_dir().join("sessions");
+            std::fs::create_dir_all(&dir).ok();
+            let msg_list: Vec<serde_json::Value> = hist.iter().map(|m| {
+                serde_json::json!({"role": m.role, "content": m.content})
+            }).collect();
+            let session_data = serde_json::json!({
+                "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+                "turn": *state_clone.session_turn.lock().await,
+                "messages": msg_list,
+            });
+            let _ = std::fs::write(dir.join("latest.json"),
+                serde_json::to_string_pretty(&session_data).unwrap_or_default());
         }
 
         // 发送完成

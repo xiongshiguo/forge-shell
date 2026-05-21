@@ -786,80 +786,73 @@ pub async fn read_handler(
     }
 }
 
-/// 联网搜索 — 三层引擎：GitHub → Gitee → DuckDuckGo（全部零配置）
+/// 联网搜索 — Cloudflare Worker 代理（海外节点，SearXNG + DDG + GitHub）
+/// 本地 Gitee 搜索兜底
 pub async fn web_search_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let query = req["query"].as_str().unwrap_or("");
     if query.is_empty() {
-        return Json(serde_json::json!({"ok": false, "results": []}));
+        return Json(serde_json::json!({"ok": false, "results": [], "error": "empty query"}));
     }
 
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent("ForgeShell/0.8")
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("ForgeShell/1.0")
         .build()
     {
         Ok(c) => c,
-        Err(e) => return Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        Err(e) => return Json(serde_json::json!({"ok": false, "results": [], "error": e.to_string()})),
     };
 
     let mut all_results: Vec<String> = Vec::new();
+    let mut source: String = "none".into();
 
-    // 1. GitHub 代码搜索（公开 API，60次/小时免认证）
-    let gh_url = format!(
-        "https://api.github.com/search/repositories?q={}&sort=stars&per_page=5",
-        urlencoding(&query)
-    );
-    if let Ok(resp) = client.get(&gh_url).send().await {
-        if let Ok(json) = resp.json::<serde_json::Value>().await {
-            if let Some(items) = json["items"].as_array() {
+    // 1. Cloudflare Worker 搜索代理（SearXNG + DDG + GitHub，从海外节点执行）
+    let worker_url = "https://forgeshell.cn/api/search";
+    if let Ok(resp) = client.post(worker_url)
+        .json(&serde_json::json!({"query": query}))
+        .send()
+        .await
+    {
+        if let Ok(data) = resp.json::<serde_json::Value>().await {
+            if data.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                if let Some(results) = data["results"].as_array() {
+                    for r in results {
+                        if let Some(s) = r.as_str() {
+                            all_results.push(s.to_string());
+                        }
+                    }
+                }
+                source = data["source"].as_str().unwrap_or("worker").to_string();
+            }
+        }
+    }
+
+    // 2. 本地 Gitee 兜底（Worker 不可达时）
+    if all_results.is_empty() {
+        let gitee_url = format!(
+            "https://gitee.com/api/v5/search/repositories?q={}&sort=stars_count&per_page=5",
+            urlencoding(&query)
+        );
+        if let Ok(resp) = client.get(&gitee_url).send().await {
+            if let Ok(items) = resp.json::<Vec<serde_json::Value>>().await {
                 for item in items.iter().take(5) {
                     let name = item["full_name"].as_str().unwrap_or("");
                     let desc = item["description"].as_str().unwrap_or("").chars().take(80).collect::<String>();
-                    let stars = item["stargazers_count"].as_u64().unwrap_or(0);
-                    all_results.push(format!("[GitHub] {} ⭐{} — {}", name, stars, desc));
+                    all_results.push(format!("[Gitee] {} — {}", name, desc));
+                }
+                if !all_results.is_empty() {
+                    source = "gitee-fallback".to_string();
                 }
             }
-        }
-    }
-
-    // 2. Gitee 仓库搜索（公开 API，免认证）
-    let gitee_url = format!(
-        "https://gitee.com/api/v5/search/repositories?q={}&sort=stars_count&per_page=5",
-        urlencoding(&query)
-    );
-    if let Ok(resp) = client.get(&gitee_url).send().await {
-        if let Ok(items) = resp.json::<Vec<serde_json::Value>>().await {
-            for item in items.iter().take(5) {
-                let name = item["full_name"].as_str().unwrap_or("");
-                let desc = item["description"].as_str().unwrap_or("").chars().take(80).collect::<String>();
-                all_results.push(format!("[Gitee] {} — {}", name, desc));
-            }
-        }
-    }
-
-    // 3. DuckDuckGo 兜底
-    let ddg_url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(&query));
-    if let Ok(resp) = client.get(&ddg_url).send().await {
-        let html = resp.text().await.unwrap_or_default();
-        let snippets: Vec<&str> = html
-            .split("result__snippet")
-            .skip(1)
-            .filter_map(|s| s.split("</").next())
-            .map(|s| s.trim_start_matches('>').trim())
-            .filter(|s| s.len() > 10)
-            .take(5)
-            .collect();
-        for s in snippets {
-            all_results.push(format!("[Web] {}", s));
         }
     }
 
     Json(serde_json::json!({
         "ok": true,
         "results": all_results,
-        "sources": ["github", "gitee", "duckduckgo"]
+        "source": source,
     }))
 }
 
@@ -1301,8 +1294,14 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}模式，预计¥{:.4})", decision.model, label, mode, decision.estimated_cost)}).to_string()
         )));
-        // 稳定提示词——不动一个字，让 DeepSeek Prefix Cache 生效
-        let system_msg = crate::system_prompt::get_system_prompt();
+        // 根据模型选择提示词：Flash 用精简版，Pro 用完整版
+        let is_flash = decision.model.contains("flash");
+        let system_variant = if is_flash { "v2-compact" } else { "v1-full" };
+        let system_msg = if is_flash {
+            crate::system_prompt::get_system_prompt_compact()
+        } else {
+            crate::system_prompt::get_system_prompt()
+        };
 
         // L2: 项目指纹缓存——目录没变就不发项目信息
         let project_info = {
@@ -1523,7 +1522,7 @@ pub async fn chat_handler(
                     let cache = state_clone.cache_stats.lock().await;
                     let complexity = decision.complexity.name().to_string();
                     state_clone.prompt_optimizer.lock().await.record(
-                        "v1-full", has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
+                        system_variant, has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
                     );
                 }
 

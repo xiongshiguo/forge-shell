@@ -77,10 +77,10 @@
       <div class="panel-section">
         <div class="panel-header">🔧 工具</div>
         <div id="tools-grid">
-          <button class="tool-chip" onclick="executeTool('exec', prompt('命令：'))">exec</button>
-          <button class="tool-chip" onclick="executeTool('read', prompt('文件路径：'))">read</button>
-          <button class="tool-chip" onclick="executeTool('search', prompt('搜索：'))">search</button>
-          <button class="tool-chip" onclick="executeTool('web', prompt('搜索：'))">web</button>
+          <button class="tool-chip" onclick="var a=prompt('命令：cargo test');if(a)executeTool('exec',a)">exec</button>
+          <button class="tool-chip" onclick="var a=prompt('文件路径：src/main.rs');if(a)executeTool('read',a)">read</button>
+          <button class="tool-chip" onclick="var a=prompt('搜索关键词：fn main');if(a)executeTool('search',a)">search</button>
+          <button class="tool-chip" onclick="var a=prompt('联网搜索：Rust async await');if(a)executeTool('web',a)">web</button>
           <button class="tool-chip" onclick="executeTool('lsp', '')">lsp</button>
           <button class="tool-chip" onclick="executeTool('auto-fix', '')">fix</button>
           <button class="tool-chip" onclick="executeTool('rollback', '')">↩</button>

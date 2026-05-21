@@ -203,17 +203,19 @@ async function executeTool(tool, arg) {
       break;
 
     case 'search':
+      if (!arg || arg === 'null') { addMsg('system', '🔍 请输入搜索关键词（在当前项目中 ripgrep 搜索）'); break; }
       var r = await fetch('/api/search', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pattern:arg, path:'.'}) });
       var d = await r.json();
-      if (d.ok && d.matches.length) addMsg('system', '🔍 ' + arg + ' (' + d.count + '条)\n' + d.matches.join('\n').substring(0, 2000));
-      else addMsg('system', '🔍 无匹配');
+      if (d.ok && d.matches.length) addMsg('system', '🔍 ' + arg + ' (' + d.count + '条):\n' + d.matches.join('\n').substring(0, 2000));
+      else addMsg('system', '🔍 \"' + arg + '\" 在当前项目中无匹配（ripgrep 搜索源文件）');
       break;
 
     case 'web':
+      if (!arg || arg === 'null') { addMsg('system', '🌐 请输入搜索关键词（GitHub+Gitee+DuckDuckGo 三层搜索）'); break; }
       var r = await fetch('/api/web-search', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:arg}) });
       var d = await r.json();
-      if (d.ok && d.results.length) addMsg('system', '🌐 ' + d.results.join('\n').substring(0, 2000));
-      else addMsg('system', '🌐 无结果');
+      if (d.ok && d.results.length) addMsg('system', '🌐 搜索 \"' + arg + '\":\n' + d.results.join('\n').substring(0, 2000));
+      else addMsg('system', '🌐 \"' + arg + '\" 无结果');
       break;
 
     case 'lsp':

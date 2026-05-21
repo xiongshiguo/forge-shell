@@ -121,19 +121,26 @@ function sendMessage() {
   streamChat(text);
 }
 
+// ---- 状态指示器 ----
+var activeToolCards = {};
+
+function setStatus(text) {
+  document.getElementById('thinking-status').textContent = text;
+}
+
 async function streamChat(msg) {
   var streamEl = document.getElementById('streaming-content');
   var areaEl = document.getElementById('streaming-area');
   areaEl.style.display = 'block';
   streamEl.textContent = '';
-  document.getElementById('thinking-status').textContent = '思考中…';
+  activeToolCards = {};
+  setStatus('思考中…');
 
   try {
     var resp = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, mode:currentMode}) });
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var buffer = '';
-    var fullText = '';
 
     while (true) {
       var r = await reader.read();
@@ -152,20 +159,82 @@ async function streamChat(msg) {
 
 function handleSSE(data) {
   var streamEl = document.getElementById('streaming-content');
-  if (data.type === 'error') {
-    document.getElementById('streaming-area').style.display = 'none';
-    addMsg('error', '❌ ' + data.message);
-  } else if (data.type === 'chunk') {
-    document.getElementById('thinking-status').textContent = '回复中…';
-    streamEl.textContent += data.content;
-    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
-  } else if (data.type === 'done') {
-    document.getElementById('streaming-area').style.display = 'none';
-    var text = streamEl.textContent;
-    streamEl.textContent = '';
-    if (text) {
-      addMsg('assistant', text);
-      parseToolCalls(text);
+  switch (data.type) {
+    case 'error':
+      document.getElementById('streaming-area').style.display = 'none';
+      addMsg('error', '❌ ' + data.message);
+      break;
+
+    case 'tool_start':
+      setStatus('🔧 执行工具中…');
+      // 为每个工具创建执行卡片
+      (data.tools || []).forEach(function(t) {
+        var card = createToolCard(t.tool, t.arg);
+        streamEl.appendChild(card);
+        activeToolCards[t.tool + ':' + t.arg] = card;
+      });
+      break;
+
+    case 'tool_result':
+      setStatus('📊 分析结果中…');
+      var key = data.tool + ':' + (data.arg || '');
+      var card = activeToolCards[key];
+      if (card) {
+        var statusEl = card.querySelector('.tool-card-status');
+        var resultEl = card.querySelector('.tool-card-result');
+        if (statusEl) {
+          statusEl.textContent = data.success ? '✓ 完成' : '✗ 失败';
+          statusEl.className = 'tool-card-status ' + (data.success ? 'ok' : 'fail');
+        }
+        if (resultEl && data.summary) {
+          resultEl.textContent = data.summary;
+          resultEl.style.display = 'block';
+        }
+      }
+      break;
+
+    case 'chunk':
+      setStatus('💬 回复中…');
+      streamEl.textContent += data.content;
+      break;
+
+    case 'done':
+      setStatus('✓ 完成');
+      document.getElementById('streaming-area').style.display = 'none';
+      var text = streamEl.textContent;
+      streamEl.textContent = '';
+      if (text) {
+        addMsg('assistant', text);
+        // 后端已处理工具调用，前端只做兜底解析
+        parseToolCallsFallback(text);
+      }
+      break;
+  }
+  document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+function createToolCard(tool, arg) {
+  var div = document.createElement('div');
+  div.className = 'tool-card';
+  var icons = {web:'🌐',search:'🔍',read:'📄',exec:'▶',lsp:'🔬','auto-fix':'🔧','lsp-rich':'🧬',edit:'✏',snap:'📸',rollback:'↩',save:'💾'};
+  var names = {web:'联网搜索',search:'代码搜索',read:'读取文件',exec:'执行命令',lsp:'代码检查','auto-fix':'自动修复','lsp-rich':'深度分析',edit:'代码编辑',snap:'快照',rollback:'回滚',save:'记忆保存'};
+  var shortArg = arg.length > 50 ? arg.substring(0, 50) + '…' : arg;
+  div.innerHTML = '<span class="tool-card-icon">' + (icons[tool] || '🔧') + '</span>' +
+    '<span class="tool-card-name">' + (names[tool] || tool) + '</span>' +
+    '<span class="tool-card-arg">' + shortArg + '</span>' +
+    '<span class="tool-card-status running">⏳ 执行中</span>' +
+    '<div class="tool-card-result" style="display:none"></div>';
+  return div;
+}
+
+// 兜底工具解析（后端已处理，此处仅做兼容）
+function parseToolCallsFallback(text) {
+  var lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (line.startsWith('[TOOL:')) {
+      var m = line.match(/\[TOOL:(\w+)(?::(.*))?\]/);
+      if (m) executeTool(m[1], m[2] || '');
     }
   }
 }

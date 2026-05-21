@@ -1676,12 +1676,15 @@ pub async fn chat_handler(
                 break; // 无工具调用或达到最大轮次
             }
 
-            // 流式进度报告
-            let tool_names: Vec<String> = tool_calls.iter().map(|(t, a)| {
-                if a.is_empty() { t.clone() } else { format!("{}:{}", t, if a.len() > 40 { &a[..40] } else { a }) }
+            // 发送结构化工具开始事件（前端渲染为工具卡片）
+            let tc_for_event: Vec<serde_json::Value> = tool_calls.iter().map(|(t, a)| {
+                serde_json::json!({"tool": t, "arg": a})
             }).collect();
             let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "chunk", "content": format!("\n\n🔧 执行工具: {}\n", tool_names.join(", "))}).to_string()
+                serde_json::json!({"type": "tool_start", "tools": tc_for_event, "round": tool_round + 1}).to_string()
+            )));
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": format!("\n\n🔧 执行 {} 个工具…\n", tool_calls.len())}).to_string()
             )));
 
             // 执行工具并收集结果（截断过长结果，避免下轮对话溢出）
@@ -1689,9 +1692,15 @@ pub async fn chat_handler(
             for (tool, arg) in &tool_calls {
                 let mut result = execute_tool_inline(tool, arg).await;
                 // 工具结果截断到 3000 字符，避免模型上下文溢出
+                let full_len = result.len();
                 if result.len() > 3000 {
-                    result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], result.len());
+                    result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], full_len);
                 }
+                let summary = if result.len() > 100 { format!("{}…", &result[..100]) } else { result.clone() };
+                // 发送结构化工具结果事件
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
+                )));
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
                 )));

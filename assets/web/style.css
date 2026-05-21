@@ -78,6 +78,53 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .thinking-dot:nth-child(3){ animation-delay:.4s; }
 #streaming-content { color:var(--text); font-size:14px; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
 
+/* 工具执行卡片 */
+.tool-card {
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+  padding:8px 12px; margin:4px 0;
+  background:var(--bg3); border:1px solid rgba(255,255,255,0.06);
+  border-radius:8px; font-size:12px;
+  animation:slideDown .2s ease;
+}
+.tool-card-icon { font-size:14px; }
+.tool-card-name { color:var(--purple-light); font-weight:600; }
+.tool-card-arg { color:var(--text-dim); font-family:monospace; font-size:11px; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:auto; }
+.tool-card-status { font-size:11px; padding:2px 8px; border-radius:4px; }
+.tool-card-status.running { color:var(--gold); background:var(--gold-glow); animation:pulse 1.5s infinite; }
+.tool-card-status.ok { color:var(--green); background:rgba(74,222,128,0.08); }
+.tool-card-status.fail { color:var(--red); background:rgba(248,113,113,0.08); }
+.tool-card-result {
+  width:100%; padding:6px 8px; margin-top:4px;
+  background:rgba(0,0,0,0.2); border-radius:4px;
+  color:var(--text-dim); font-size:11px; white-space:pre-wrap; word-break:break-word;
+  max-height:80px; overflow-y:auto;
+}
+
+/* 状态栏（顶部进度） */
+#status-bar {
+  display:flex; align-items:center; gap:8px; padding:6px 20px;
+  background:var(--bg2); border-bottom:1px solid rgba(255,255,255,0.04);
+  font-size:12px; color:var(--gold); flex-shrink:0;
+  transition:all .3s;
+}
+.status-phase { font-weight:600; }
+.status-detail { color:var(--text-dim); font-size:11px; }
+.status-spinner {
+  width:12px; height:12px; border:2px solid var(--bg3);
+  border-top-color:var(--purple-light); border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+
+/* 代码块渲染 */
+.message.assistant code, .message.assistant pre {
+  font-family:'Cascadia Code','Fira Code',Consolas,monospace;
+  font-size:13px;
+}
+.message.assistant pre {
+  background:rgba(0,0,0,0.3); border:1px solid var(--bg3);
+  border-radius:6px; padding:12px; overflow-x:auto; margin:8px 0;
+}
+
 /* 右面板 */
 #right-panel { width:210px; min-width:170px; background:var(--bg2); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-left:1px solid rgba(255,255,255,0.04); overflow-y:auto; padding:12px; flex-shrink:0; }
 .panel-section { margin-bottom:18px; }

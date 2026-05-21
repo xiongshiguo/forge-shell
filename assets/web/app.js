@@ -429,12 +429,11 @@ async function refreshRight() {
 
     // 项目摘要
     var f = await fetch('/api/project'); var fd = await f.json();
-    var el = document.getElementById('project-summary');
-    if (fd.ok) {
-      el.innerHTML = (fd.files||[]).slice(0, 8).map(function(x) {
-        return '<div class="proj-file">' + x.name + ' <span class="proj-lines">' + (x.lines||0) + '行</span></div>';
+    if (fd.ok && fd.recent_commits && fd.recent_commits.length) {
+      var el = document.getElementById('recent-commits');
+      el.innerHTML = fd.recent_commits.slice(0, 5).map(function(c) {
+        return '<div class="commit-row"><span class="commit-hash">' + c.hash + '</span><span class="commit-msg">' + c.message.substring(0, 40) + '</span><span class="commit-date">' + c.date + '</span></div>';
       }).join('');
-      if (fd.files && fd.files.length > 8) el.innerHTML += '<div style="font-size:10px;color:var(--text-dim);margin-top:2px">…及其他 ' + (fd.files.length - 8) + ' 个文件</div>';
     }
 
     loadSessions();

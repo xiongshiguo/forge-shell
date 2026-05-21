@@ -135,9 +135,11 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .stat-label { color:var(--text-dim); }
 .stat-val { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
 
-/* 项目文件列表 */
-.proj-file { display:flex; justify-content:space-between; padding:2px 0; font-size:11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.proj-lines { color:var(--text-dim); font-size:10px; flex-shrink:0; margin-left:8px; }
+/* 最近提交 */
+.commit-row { padding:3px 0; font-size:11px; line-height:1.4; border-bottom:1px solid rgba(255,255,255,0.03); }
+.commit-hash { color:var(--purple-light); font-family:monospace; font-size:10px; margin-right:6px; }
+.commit-msg { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+.commit-date { color:var(--text-dim); font-size:10px; }
 .tool-list { display:flex; flex-direction:column; gap:1px; }
 .tool-row { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; border-radius:6px; cursor:pointer; transition:all .12s; }
 .tool-row:hover { background:rgba(255,255,255,0.04); }

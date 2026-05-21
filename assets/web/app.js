@@ -2,6 +2,27 @@
 
 var currentMode = 'assist';
 
+// 面板折叠
+function toggleSection(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var hdr = el.previousElementSibling;
+  var arrow = hdr ? hdr.querySelector('.collapse-arrow') : null;
+  if (el.style.display === 'none') { el.style.display = 'flex'; if (arrow) arrow.textContent = '▾'; }
+  else { el.style.display = 'none'; if (arrow) arrow.textContent = '▸'; }
+}
+
+// 同步所有版本号
+async function syncVersion() {
+  try {
+    var r = await fetch('/api/update-check');
+    var d = await r.json();
+    var v = d.current || '0.14.1';
+    var badges = document.querySelectorAll('.version-badge, .version');
+    badges.forEach(function(b) { if (b.classList.contains('version-badge') || b.classList.contains('version')) b.textContent = 'v' + v; });
+  } catch(e) {}
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
   try {
     var resp = await fetch('/api/check-key');
@@ -37,6 +58,7 @@ function showMainUI() {
   document.getElementById('app').style.display = 'flex';
   setupModes();
   setupSend();
+  syncVersion();
   setupReview();
   addMsg('system', '🔥 熔炉已就绪');
   loadFileTree();

@@ -89,6 +89,9 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .tool-name { font-size:12px; color:var(--text); white-space:nowrap; }
 .tool-hint { font-size:10px; color:var(--text-dim); margin-left:8px; white-space:nowrap; }
 .tool-sep { height:1px; background:var(--bg3); margin:2px 0; }
+.collapsible { cursor:pointer; user-select:none; }
+.collapsible:hover { color:var(--text); }
+.collapse-arrow { font-size:10px; margin-left:4px; }
 
 /* 底部栏 */
 #bottombar { padding:8px 16px; background:var(--bg2); border-top:1px solid var(--bg3); flex-shrink:0; }

@@ -862,6 +862,138 @@ fn urlencoding(s: &str) -> String {
     }).collect::<String>().replace(' ', "+")
 }
 
+/// 工具调用闭环内联执行器 — 在后端直接执行工具，结果回注对话
+async fn execute_tool_inline(tool: &str, arg: &str) -> String {
+    match tool {
+        "web" => {
+            // 调用搜索代理（优先 Worker，Gitee 兜底）
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(12))
+                .user_agent("ForgeShell/1.0")
+                .build()
+            {
+                Ok(c) => c, Err(e) => return format!("创建HTTP客户端失败: {}", e),
+            };
+            let worker_url = "https://forgeshell.cn/api/search";
+            if let Ok(resp) = client.post(worker_url)
+                .json(&serde_json::json!({"query": arg}))
+                .send().await
+            {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if let Some(results) = data["results"].as_array() {
+                        if !results.is_empty() {
+                            let lines: Vec<String> = results.iter()
+                                .filter_map(|r| r.as_str().map(|s| s.to_string()))
+                                .take(6).collect();
+                            return lines.join("\n");
+                        }
+                    }
+                }
+            }
+            // Gitee 兜底
+            let gitee_url = format!("https://gitee.com/api/v5/search/repositories?q={}&sort=stars_count&per_page=3",
+                urlencoding(arg));
+            if let Ok(resp) = client.get(&gitee_url).send().await {
+                if let Ok(items) = resp.json::<Vec<serde_json::Value>>().await {
+                    let lines: Vec<String> = items.iter().take(3).map(|item| {
+                        format!("[Gitee] {} — {}",
+                            item["full_name"].as_str().unwrap_or(""),
+                            item["description"].as_str().unwrap_or("").chars().take(80).collect::<String>())
+                    }).collect();
+                    if !lines.is_empty() { return lines.join("\n"); }
+                }
+            }
+            "搜索未返回结果，请尝试换关键词或换个问法。".to_string()
+        }
+        "search" => {
+            match tokio::process::Command::new("rg")
+                .args(["--no-heading", "-n", "--max-count=30", arg, "."])
+                .output().await
+            {
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    if stdout.trim().is_empty() { "项目中未找到匹配，建议检查拼写或换个关键词。".into() }
+                    else { stdout }
+                }
+                Err(e) => format!("ripgrep 执行失败: {}", e),
+            }
+        }
+        "read" => {
+            let parts: Vec<&str> = arg.split(':').collect();
+            let path = parts.first().map(|s| s.trim()).unwrap_or("");
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let lines: Vec<&str> = content.lines().take(100).collect();
+                    lines.iter().enumerate()
+                        .map(|(i, l)| format!("{:>5}  {}", i + 1, l))
+                        .collect::<Vec<_>>().join("\n")
+                }
+                Err(e) => format!("读取失败: {}", e),
+            }
+        }
+        "exec" => {
+            match tokio::process::Command::new("cmd").args(["/C", arg]).output().await {
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                    if o.status.success() {
+                        format!("{}\n{}", stdout, stderr)
+                    } else {
+                        format!("命令失败 (exit={}):\n{}\n{}",
+                            o.status.code().unwrap_or(-1), stdout, stderr)
+                    }
+                }
+                Err(e) => format!("命令执行失败: {}", e),
+            }
+        }
+        "lsp" => {
+            match tokio::process::Command::new("cargo")
+                .args(["check", "--message-format=json"])
+                .output().await
+            {
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let errors: Vec<String> = stdout.lines().filter_map(|line| {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                            if v["reason"].as_str() == Some("compiler-message") {
+                                let msg = v["message"]["rendered"].as_str().unwrap_or("");
+                                if !msg.is_empty() { return Some(msg.to_string()); }
+                            }
+                        }
+                        None
+                    }).take(10).collect();
+                    if errors.is_empty() { "cargo check 无错误".into() }
+                    else { errors.join("\n") }
+                }
+                Err(e) => format!("cargo check 执行失败: {}", e),
+            }
+        }
+        "snap" => {
+            // 读取快照目录
+            let snap_dir = crate::config::forge_data_dir().join("snapshots");
+            match std::fs::read_dir(&snap_dir) {
+                Ok(entries) => {
+                    let mut snaps = Vec::new();
+                    for e in entries.flatten() {
+                        snaps.push(e.file_name().to_string_lossy().to_string());
+                    }
+                    if snaps.is_empty() { "无快照".into() }
+                    else { snaps.join("\n") }
+                }
+                Err(_) => "无快照目录".into(),
+            }
+        }
+        "save" => {
+            let ctx_path = std::path::PathBuf::from("FORGESHELL_CONTEXT.md");
+            match std::fs::write(&ctx_path, arg) {
+                Ok(()) => "已保存到 FORGESHELL_CONTEXT.md".into(),
+                Err(e) => format!("保存失败: {}", e),
+            }
+        }
+        _ => format!("工具 {} 不支持在工具循环中自动执行", tool),
+    }
+}
+
 /// 提示词优化器统计
 pub async fn prompt_stats_handler(
     State(state): State<SharedState>,
@@ -1461,86 +1593,143 @@ pub async fn chat_handler(
             }
         }
 
-        let mut client = match crate::engine::inference::InferenceClient::new(&config) {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": format!("创建客户端失败: {}", e)}).to_string()
-                )));
-                return;
-            }
-        };
-
-        let messages = vec![
+        // 对话上下文——工具循环会往里追加工具结果
+        let mut conversation = vec![
             crate::engine::inference::ChatMessage::system(&system_msg),
             crate::engine::inference::ChatMessage::user(&user_msg),
         ];
 
-        match client.chat_stream(messages).await {
-            Ok(mut stream) => {
-                use futures::StreamExt;
-                let mut has_content = false;
-                while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            if !chunk.content.is_empty() {
-                                has_content = true;
-                                let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
-                                )));
-                            }
-                            if chunk.finish_reason.is_some() {
-                                let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "done", "finish_reason": chunk.finish_reason}).to_string()
-                                )));
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Ok(Event::default().data(
-                                serde_json::json!({"type": "error", "message": format!("流式错误: {}", e)}).to_string()
-                            )));
-                        }
-                    }
-                }
-                // 记录经验 + 匹配 SOP + 自动反思
-                {
-                    let mut evo = state_clone.evolution.lock().await;
-                    evo.record_turn(&req.message, "[OK]", has_content);
-                    if has_content {
-                        let matches = evo.match_sop(&req.message);
-                        if !matches.is_empty() {
-                            let _ = tx.send(Ok(Event::default().data(
-                                serde_json::json!({"type": "chunk", "content": format!("\n💡 天工阁匹配到 {} 条 SOP\n", matches.len())}).to_string()
-                            )));
-                        }
-                        evo.try_reflect();
-                    }
-                }
+        let mut has_content = false;
+        let mut tool_round = 0u32;
+        let max_tool_rounds = 5u32;
 
-                // 记录提示词优化数据
-                {
-                    let cache = state_clone.cache_stats.lock().await;
-                    let complexity = decision.complexity.name().to_string();
-                    state_clone.prompt_optimizer.lock().await.record(
-                        system_variant, has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
-                    );
-                }
-
-                if !has_content {
+        // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
+        loop {
+            let mut client = match crate::engine::inference::InferenceClient::new(&config) {
+                Ok(c) => c,
+                Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
+                        serde_json::json!({"type": "error", "message": format!("客户端创建失败: {}", e)}).to_string()
+                    )));
+                    return;
+                }
+            };
+
+            let mut round_text = String::new();
+            let stream_result = client.chat_stream(conversation.clone()).await;
+
+            match stream_result {
+                Ok(mut stream) => {
+                    use futures::StreamExt;
+                    while let Some(chunk_result) = stream.next().await {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                if !chunk.content.is_empty() {
+                                    has_content = true;
+                                    round_text.push_str(&chunk.content);
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
+                                    )));
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "error", "message": format!("流式错误: {}", e)}).to_string()
+                                )));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_msg = format!("API 调用失败: {}", e);
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "error", "message": &error_msg}).to_string()
+                    )));
+                    {
+                        let mut evo = state_clone.evolution.lock().await;
+                        evo.record_turn(&req.message, &error_msg, false);
+                    }
+                    return;
+                }
+            }
+            // stream 已 drop，client 不再被借用
+
+            // 解析工具调用
+            let tool_calls: Vec<(String, String)> = round_text
+                .lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    if line.starts_with("[TOOL:") {
+                        let inner = line.trim_start_matches("[TOOL:").trim_end_matches(']');
+                        let parts: Vec<&str> = inner.splitn(2, ':').collect();
+                        Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string()).unwrap_or_default()))
+                    } else { None }
+                }).collect();
+
+            if tool_calls.is_empty() || tool_round >= max_tool_rounds {
+                break; // 无工具调用或达到最大轮次
+            }
+
+            // 流式进度报告
+            let tool_names: Vec<String> = tool_calls.iter().map(|(t, a)| {
+                if a.is_empty() { t.clone() } else { format!("{}:{}", t, if a.len() > 40 { &a[..40] } else { a }) }
+            }).collect();
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": format!("\n\n🔧 执行工具: {}\n", tool_names.join(", "))}).to_string()
+            )));
+
+            // 执行工具并收集结果
+            let mut tool_results = String::new();
+            for (tool, arg) in &tool_calls {
+                let result = execute_tool_inline(tool, arg).await;
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
+                )));
+                tool_results.push_str(&format!("\n--- 工具 {} 执行结果 ---\n{}\n", tool, result));
+            }
+
+            // 将本轮回复和工具结果追加到对话
+            conversation.push(crate::engine::inference::ChatMessage::assistant(&round_text));
+            conversation.push(crate::engine::inference::ChatMessage::user(&format!(
+                "你刚才调用了工具，以下是执行结果。请基于这些结果继续回答用户：\n{}", tool_results
+            )));
+
+            tool_round += 1;
+        }
+
+        // 发送完成
+        let _ = tx.send(Ok(Event::default().data(
+            serde_json::json!({"type": "done", "finish_reason": "stop"}).to_string()
+        )));
+
+        // 记录经验 + 匹配 SOP
+        {
+            let mut evo = state_clone.evolution.lock().await;
+            evo.record_turn(&req.message, "[OK]", has_content);
+            if has_content {
+                let matches = evo.match_sop(&req.message);
+                if !matches.is_empty() {
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "chunk", "content": format!("\n💡 天工阁匹配到 {} 条 SOP\n", matches.len())}).to_string()
                     )));
                 }
+                evo.try_reflect();
             }
-            Err(e) => {
-                let error_msg = format!("API 调用失败: {}", e);
-                let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": &error_msg}).to_string()
-                )));
-                // 记录失败经验
-                let mut evo = state_clone.evolution.lock().await;
-                evo.record_turn(&req.message, &error_msg, false);
-            }
+        }
+
+        // 记录提示词优化数据
+        {
+            let cache = state_clone.cache_stats.lock().await;
+            let complexity = decision.complexity.name().to_string();
+            state_clone.prompt_optimizer.lock().await.record(
+                system_variant, has_content, cache.total_tokens, cache.cache_hit_tokens, &complexity
+            );
+        }
+
+        if !has_content {
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
+            )));
         }
     });
 

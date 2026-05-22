@@ -499,8 +499,18 @@ fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
         }},
         ToolDef { tool_type: "function".into(), function: ToolFunction {
             name: "save".into(),
-            description: "保存内容到跨会话记忆".into(),
+            description: "保存内容到跨会话记忆（追加模式）".into(),
             parameters: serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"要记住的内容"}},"required":["content"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "community-fix".into(),
+            description: "搜索社区经验池，查找已知问题的修复方案".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"错误关键词"}},"required":["query"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "share-fix".into(),
+            description: "匿名提交修复策略到社区经验池（格式: 错误模式|修复方案|诊断）".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"pattern|fix|diagnosis"}},"required":["content"]}),
         }},
     ]
 }
@@ -1082,7 +1092,7 @@ mod tests {
     #[test]
     fn test_build_tool_defs_count() {
         let defs = build_tool_defs();
-        assert_eq!(defs.len(), 11, "Should have 11 tool definitions");
+        assert_eq!(defs.len(), 13, "Should have 13 tool definitions");
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
         assert!(names.contains(&"read"));
         assert!(names.contains(&"write"));
@@ -1250,6 +1260,52 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                     else { snaps.join("\n") }
                 }
                 Err(_) => "无快照目录".into(),
+            }
+        }
+        "community-fix" => {
+            // 从社区经验池搜索已知问题的修复
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .build() { Ok(c) => c, Err(e) => return format!("{}", e) };
+            let url = "https://forgeshell.cn/api/experience";
+            match client.get(url).send().await {
+                Ok(resp) => {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        let fixes = data["fixes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                        if fixes.is_empty() { "社区经验池暂无相关修复".into() }
+                        else {
+                            let matched: Vec<String> = fixes.iter()
+                                .filter(|f| {
+                                    let p = f["pattern"].as_str().unwrap_or("");
+                                    arg.is_empty() || p.contains(arg)
+                                })
+                                .take(5)
+                                .map(|f| format!("- [{}] {} → {}", f["timestamp"].as_str().unwrap_or("?"), f["pattern"].as_str().unwrap_or("?"), f["fix"].as_str().unwrap_or("?")))
+                                .collect();
+                            if matched.is_empty() { format!("经验池中未找到与 '{}' 匹配的修复", arg) }
+                            else { format!("社区经验池匹配 ({} 条):\n{}", matched.len(), matched.join("\n")) }
+                        }
+                    } else { "经验池查询失败".into() }
+                }
+                Err(e) => format!("连接经验池失败: {}", e),
+            }
+        }
+        "share-fix" => {
+            // 匿名提交修复策略到社区经验池
+            let parts: Vec<&str> = arg.splitn(3, '|').collect();
+            let pattern = parts.first().unwrap_or(&"").trim();
+            let fix_desc = parts.get(1).unwrap_or(&"").trim();
+            let diag = parts.get(2).unwrap_or(&"").trim();
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .build() { Ok(c) => c, Err(e) => return format!("{}", e) };
+            let body = serde_json::json!({"pattern": pattern, "fix": fix_desc, "diagnosis": diag, "component": "shared"});
+            match client.post("https://forgeshell.cn/api/experience").json(&body).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() { "经验已匿名提交到社区熔池，感谢贡献！".into() }
+                    else { format!("提交失败: {}", resp.status()) }
+                }
+                Err(e) => format!("提交失败: {}", e),
             }
         }
         "save" => {

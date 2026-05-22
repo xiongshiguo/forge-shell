@@ -1943,8 +1943,8 @@ pub async fn chat_handler(
         // 根据复杂度动态设定输出上限（DeepSeek V4 最大输出 384K）
         let max_out_tokens: u32 = match decision.complexity {
             crate::engine::router::Complexity::Simple => 16384,
-            crate::engine::router::Complexity::Moderate => 65536,
-            crate::engine::router::Complexity::Complex => 196608,
+            crate::engine::router::Complexity::Moderate => 131072,
+            crate::engine::router::Complexity::Complex => 393216,
         };
 
         // L2: 项目上下文注入——利用 DeepSeek 1M 上下文能力
@@ -1991,7 +1991,7 @@ pub async fn chat_handler(
             // Pro 和 Flash 并行
             let (pro_handle, flash_handle) = tokio::join!(
                 tokio::spawn(async move {
-                    let mut client = match crate::engine::inference::InferenceClient::new(&pro_config).map(|c| c.with_max_tokens(65536)) {
+                    let mut client = match crate::engine::inference::InferenceClient::new(&pro_config).map(|c| c.with_max_tokens(393216)) {
                         Ok(c) => c, Err(_) => return String::new(),
                     };
                     let msgs = vec![

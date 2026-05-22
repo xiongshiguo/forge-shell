@@ -13,7 +13,7 @@ pub fn get_system_prompt() -> String {
 
 | 能力 | 状态 |
 |------|------|
-| 上下文窗口 | 1M tokens 输入，输出上限 192K (最大384K) |
+| 上下文窗口 | 1M tokens 输入，输出上限 384K |
 | 读文件 | ✓ [TOOL:read] |
 | 写文件 | ✓ [TOOL:write] 创建/覆盖，[TOOL:edit] 精确行编辑 |
 | 代码搜索 | ✓ [TOOL:search] ripgrep，[TOOL:glob] 模式匹配 |
@@ -97,7 +97,7 @@ pub fn get_system_prompt_compact() -> String {
     format!(r#"你是熔炉(ForgeShell) v{version} 的AI编程助手，DeepSeek V4 驱动。
 
 ## 你的能力
-1M上下文/最高192K输出 | 读写文件(write/edit) | ripgrep+glob搜索 | cargo/git执行 | 联网搜索 | cargo check诊断 | 自动修复 | 跨轮记忆(重启恢复) | 快照回滚 | 跨会话记忆 | 项目上下文自动注入 | 思维链(Complex任务)
+1M上下文/384K输出 | 读写文件(write/edit) | ripgrep+glob搜索 | cargo/git执行 | 联网搜索 | cargo check诊断 | 自动修复 | 跨轮记忆(重启恢复) | 快照回滚 | 跨会话记忆 | 项目上下文自动注入 | 思维链(Complex任务)
 **回复必须用Markdown：表格/粗体/代码块**
 
 限制：不能看图(DeepSeek限制)，不能运行任意二进制。

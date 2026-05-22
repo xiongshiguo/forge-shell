@@ -888,6 +888,15 @@ pub async fn session_auto_save_handler(
     });
     let _ = std::fs::write(dir.join(format!("session_{}.json", session_id)),
         serde_json::to_string_pretty(&session).unwrap_or_default());
+    // 同时更新 latest.json（启动恢复用）
+    let latest = serde_json::json!({
+        "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+        "turn": turns,
+        "messages": [],
+        "auto_saved": true,
+    });
+    let _ = std::fs::write(dir.join("latest.json"),
+        serde_json::to_string_pretty(&latest).unwrap_or_default());
     // 异步记录进化数据
     {
         let mut evo = state.evolution.lock().await;
@@ -1988,6 +1997,19 @@ pub async fn chat_handler(
                 format!("\n\n历史摘要(前{}轮):\n{}", summaries.len(), summaries.join("\n"))
             } else { String::new() }
         } else { String::new() };
+
+        // 每次对话开始就保存 latest.json（即使后续失败也有记录）
+        {
+            let dir = crate::config::forge_data_dir().join("sessions");
+            std::fs::create_dir_all(&dir).ok();
+            let starter = serde_json::json!({
+                "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+                "turn": *state_clone.session_turn.lock().await + 1,
+                "messages": [{"role": "user", "content": &req.message}],
+            });
+            let _ = std::fs::write(dir.join("latest.json"),
+                serde_json::to_string_pretty(&starter).unwrap_or_default());
+        }
 
         let error_context = build_error_context(&state_clone);
         let user_msg = format!("{}{}{}{}{}", req.message, project_info, error_context, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });

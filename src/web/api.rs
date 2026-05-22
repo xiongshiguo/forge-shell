@@ -2041,14 +2041,23 @@ pub async fn chat_handler(
                             }
                             Err(e) => {
                                 stream_errors += 1;
-                                let err_msg = format!("流式错误: {} (第{}次)", e, stream_errors);
-                                let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "error", "message": &err_msg}).to_string()
-                                )));
-                                // 连续3次错误则中断，防止无限重试
+                                if stream_errors == 1 {
+                                    // 第一次错误通知用户
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "error", "message": format!("流异常: {}", e)}).to_string()
+                                    )));
+                                }
+                                // 已有有效内容则优美降级（保留已收到的内容）
+                                if !round_text.is_empty() || !last_chunk_tool_calls.is_empty() {
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应中断，基于已接收内容继续\n"}).to_string()
+                                    )));
+                                    break;
+                                }
+                                // 连续3次空响应则放弃
                                 if stream_errors >= 3 {
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "error", "message": "流已中断（连续错误过多）"}).to_string()
+                                        serde_json::json!({"type": "error", "message": "响应流已中断（连续空响应）"}).to_string()
                                     )));
                                     break;
                                 }

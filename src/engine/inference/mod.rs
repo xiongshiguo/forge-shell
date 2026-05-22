@@ -136,7 +136,17 @@ impl InferenceClient {
         let stream = resp
             .bytes_stream()
             .map(|result| {
-                let bytes = result.map_err(|e| ForgeError::Api(e.to_string()))?;
+                let bytes = match result {
+                    Ok(b) => b,
+                    Err(e) => {
+                        // 区分流错误类型，给出有用信息
+                        let detail = if e.is_timeout() { "连接超时"
+                        } else if e.is_connect() { "无法连接"
+                        } else if e.is_body() { "响应体解码失败（可能对话过大导致服务端截断）"
+                        } else { "网络错误" };
+                        return Err(ForgeError::Api(format!("{}: {}", detail, e)));
+                    }
+                };
                 let text = String::from_utf8_lossy(&bytes).to_string();
                 self.parse_sse_line(&text)
             });

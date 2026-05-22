@@ -554,8 +554,8 @@ async function refreshErrorLogs() {
       var errs = d.logs || [];
       document.getElementById('err-count').textContent = errs.length;
       var ind = document.getElementById('err-indicator');
-      if (errs.length > 0) { ind.style.display = 'inline'; ind.style.color = errs.length > 5 ? 'var(--red)' : 'var(--gold)'; }
-      else ind.style.display = 'none';
+      if (errs.length > 0) { ind.style.color = errs.length > 5 ? 'var(--red)' : 'var(--gold)'; ind.innerHTML = '⚠️ <span id=\"err-count\">' + errs.length + '</span>'; }
+      else { ind.style.color = 'var(--green)'; ind.innerHTML = '✓ <span id=\"err-count\">0</span>'; }
 
       listEl.innerHTML = errs.length ? errs.reverse().map(function(e) {
         var icon = e.level === 'panic' ? '💥' : e.level === 'warn' ? '⚠️' : '❌';
@@ -582,7 +582,8 @@ setInterval(function() {
       var c = (d.logs||[]).length;
       document.getElementById('err-count').textContent = c;
       var ind = document.getElementById('err-indicator');
-      if (c > 0) { ind.style.display = 'inline'; ind.style.color = c > 5 ? 'var(--red)' : 'var(--gold)'; }
+      if (c > 0) { ind.style.color = c > 5 ? 'var(--red)' : 'var(--gold)'; ind.innerHTML = '⚠️ <span id=\"err-count\">' + c + '</span>'; }
+      else { ind.style.color = 'var(--green)'; ind.innerHTML = '✓ <span id=\"err-count\">0</span>'; }
     }
   }).catch(function(){});
 }, 30000);

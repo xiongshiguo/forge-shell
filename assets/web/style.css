@@ -175,8 +175,8 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .stat-val { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
 
 /* 错误指示器 */
-.err-indicator { cursor:pointer; font-size:12px; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.05); transition:all .15s; }
-.err-indicator:hover { background:rgba(255,255,255,0.1); }
+.err-indicator { cursor:pointer; font-size:12px; padding:4px 10px; border-radius:4px; background:rgba(255,255,255,0.08); transition:all .15s; user-select:none; }
+.err-indicator:hover { background:rgba(255,255,255,0.15); }
 
 /* 错误日志条 */
 .err-entry { padding:6px 8px; margin:2px 0; background:rgba(255,255,255,0.02); border-radius:4px; border-left:3px solid var(--red); }

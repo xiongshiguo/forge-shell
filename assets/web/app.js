@@ -2,6 +2,7 @@
 
 var currentMode = 'assist';
 var currentModelPref = 'auto';
+var activeAbortController = null; // 用于中断正在进行的请求
 
 function setModelPref(val) {
   currentModelPref = val;
@@ -151,17 +152,23 @@ function renderFileNode(node, path) {
 
 // ---- 发送消息 ----
 function sendMessage() {
+  // 如果正在请求中，执行中断
+  if (activeAbortController) {
+    stopGeneration();
+    return;
+  }
+
   var inp = document.getElementById('user-input');
   var text = inp.value.trim();
   if (!text) return;
   inp.value = '';
 
-  // 如果 AI 正在回复中，先保存已收到的内容（防止用户误触丢失）
+  // 如果 AI 正在回复中，先保存已收到的内容
   var areaEl = document.getElementById('streaming-area');
   var streamEl = document.getElementById('streaming-content');
   if (areaEl.style.display !== 'none' && streamEl.textContent.trim()) {
     var partial = streamEl.textContent;
-    addMsg('system', '⚠️ 上一条回复被中断，以下是已收到的内容：');
+    addMsg('system', '⚠️ 上一条回复被中断');
     addMsg('assistant', partial);
     streamEl.textContent = '';
     areaEl.style.display = 'none';
@@ -169,6 +176,23 @@ function sendMessage() {
 
   addMsg('user', text);
   streamChat(text);
+}
+
+function stopGeneration() {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+  document.getElementById('streaming-area').style.display = 'none';
+  var streamEl = document.getElementById('streaming-content');
+  var partial = streamEl.textContent;
+  if (partial.trim()) {
+    addMsg('system', '⏹ 已中断');
+    addMsg('assistant', partial);
+  }
+  streamEl.textContent = '';
+  setStatus('就绪');
+  setSendButtonState(false);
 }
 
 // ---- 状态指示器 ----
@@ -185,12 +209,22 @@ async function streamChat(msg) {
   streamEl.textContent = '';
   activeToolCards = {};
   setStatus('思考中…');
+  setSendButtonState(true);
+
+  var controller = new AbortController();
+  activeAbortController = controller;
 
   try {
-    var resp = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, mode:currentMode, model_pref:currentModelPref}) });
+    var resp = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg, mode:currentMode, model_pref:currentModelPref}),
+      signal: controller.signal
+    });
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var buffer = '';
+    var startTime = Date.now();
 
     while (true) {
       var r = await reader.read();
@@ -203,23 +237,57 @@ async function streamChat(msg) {
           try { handleSSE(JSON.parse(lines[i].slice(6))); } catch(e) {}
         }
       }
+      // 显示已用时间
+      var elapsed = Math.floor((Date.now() - startTime) / 1000);
+      if (elapsed > 2 && elapsed % 5 === 0) {
+        setStatus('思考中… (' + elapsed + 's)');
+      }
     }
   } catch(e) {
-    // 保留已接收的内容
+    if (e.name === 'AbortError') return; // 用户中断，已在 stopGeneration 处理
     var partialText = streamEl.textContent;
     if (partialText && partialText.trim()) {
-      addMsg('system', '⚠️ 连接中断，以下是已收到的内容：');
+      addMsg('system', '⚠️ 连接中断');
       addMsg('assistant', partialText);
     }
     document.getElementById('streaming-area').style.display = 'none';
     streamEl.textContent = '';
     addMsg('error', '❌ 连接失败: ' + (e.message || 'network error'));
+  } finally {
+    activeAbortController = null;
+    setSendButtonState(false);
+  }
+}
+
+function setSendButtonState(isStreaming) {
+  var btn = document.getElementById('send-btn');
+  if (isStreaming) {
+    btn.textContent = '⏹ 中断';
+    btn.style.background = 'var(--red)';
+  } else {
+    btn.textContent = '发送';
+    btn.style.background = '';
   }
 }
 
 function handleSSE(data) {
   var streamEl = document.getElementById('streaming-content');
   switch (data.type) {
+    case 'reasoning':
+      // 显示思考链
+      var thinkEl = document.getElementById('thinking-content');
+      if (!thinkEl) {
+        var area = document.getElementById('streaming-area');
+        var div = document.createElement('div');
+        div.id = 'thinking-content';
+        div.style.cssText = 'font-size:11px;color:var(--text-dim);padding:6px 10px;margin-bottom:8px;background:rgba(201,169,110,0.05);border:1px solid rgba(201,169,110,0.1);border-radius:6px;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;';
+        area.insertBefore(div, area.firstChild);
+        thinkEl = div;
+      }
+      thinkEl.textContent += data.content;
+      setStatus('🧠 思考中…');
+      break;
+
     case 'error':
       document.getElementById('streaming-area').style.display = 'none';
       addMsg('error', '❌ ' + data.message);

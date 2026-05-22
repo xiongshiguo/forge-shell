@@ -2210,9 +2210,12 @@ pub async fn chat_handler(
                                         serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
                                     )));
                                 }
-                                // 累积 reasoning_content（thinking 模式必须回传）
+                                // 累积 reasoning_content 并显示在前端（思考链可见）
                                 if !chunk.reasoning_content.is_empty() {
                                     round_reasoning.push_str(&chunk.reasoning_content);
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "reasoning", "content": chunk.reasoning_content}).to_string()
+                                    )));
                                 }
                                 // 累积原生 tool_calls
                                 if !chunk.tool_calls.is_empty() {

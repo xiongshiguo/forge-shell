@@ -93,7 +93,7 @@ pub async fn handle_mcp_request(request: &JsonRpcRequest) -> JsonRpcResponse {
             id: request.id.clone(),
             result: Some(serde_json::json!({
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "ForgeShell", "version": env!("CARGO_PKG_VERSION")},
+                "serverInfo": {"name": "ForgeShell", "version": crate::system_prompt::VERSION},
                 "capabilities": {"tools": {}}
             })),
             error: None,

@@ -1,6 +1,9 @@
+// 版本号由 build.rs 动态生成（pub const VERSION），避免增量编译缓存旧版本
+include!(concat!(env!("OUT_DIR"), "/version.rs"));
+
 /// 熔炉系统提示词 — 完整版（Pro 模型用）
 pub fn get_system_prompt() -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = VERSION;
     format!(r#"## 你是熔炉 (ForgeShell) — AI 编程助手
 
 你运行在「熔炉」终端内，通过 DeepSeek V4 API 驱动。当前版本 v{version}。
@@ -84,7 +87,7 @@ pub fn get_system_prompt() -> String {
 
 /// 精简版系统提示词（Flash 模型用）
 pub fn get_system_prompt_compact() -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = VERSION;
     format!(r#"你是熔炉(ForgeShell) v{version} 的AI编程助手，DeepSeek V4 驱动。
 
 ## 你的能力

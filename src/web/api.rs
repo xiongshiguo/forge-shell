@@ -108,7 +108,7 @@ pub struct CommitItem {
 
 /// 一键更新：下载新版本 → 替换 → 重启
 pub async fn update_now_handler() -> Json<serde_json::Value> {
-    let current = env!("CARGO_PKG_VERSION");
+    let current = crate::system_prompt::VERSION;
     match check_latest_version().await {
         Ok(Some(latest)) if latest != current => {
             let download_url = format!(
@@ -178,7 +178,7 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
 
 /// 检查更新
 pub async fn update_check_handler() -> Json<serde_json::Value> {
-    let current = env!("CARGO_PKG_VERSION");
+    let current = crate::system_prompt::VERSION;
     match check_latest_version().await {
         Ok(Some(latest)) if latest != current => {
             Json(serde_json::json!({

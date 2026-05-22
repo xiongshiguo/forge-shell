@@ -70,10 +70,6 @@
     <section id="chat">
       <div id="messages"></div>
       <div id="streaming-area" style="display:none">
-        <div class="thinking-indicator">
-          <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>
-          <span id="thinking-status">思考中…</span>
-        </div>
         <div id="streaming-content"></div>
       </div>
     </section>
@@ -124,6 +120,10 @@
 
   <!-- 底部输入栏 -->
   <footer id="bottombar">
+    <div id="status-line">
+      <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>
+      <span id="thinking-status">就绪</span>
+    </div>
     <div class="input-wrapper">
       <input id="user-input" type="text" placeholder="输入指令… (Enter 发送)" autofocus>
       <button id="send-btn">发送</button>

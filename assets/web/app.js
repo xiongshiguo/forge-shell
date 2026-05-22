@@ -65,6 +65,23 @@ function showMainUI() {
   refreshRight();
   setInterval(refreshRight, 5000);
   loadLatestSession();
+  setupAutoSave();
+}
+
+// 关闭窗口自动提交经验（sendBeacon 保证不丢）
+function setupAutoSave() {
+  window.addEventListener('beforeunload', function() {
+    var msgs = [];
+    document.querySelectorAll('#messages .message').forEach(function(m) {
+      if (m.classList.contains('user') || m.classList.contains('assistant')) {
+        msgs.push(m.textContent.substring(0, 100));
+      }
+    });
+    if (msgs.length > 0) {
+      navigator.sendBeacon('/api/session/auto-save',
+        JSON.stringify({turns: msgs.length, preview: msgs.slice(-4).join(' | ')}));
+    }
+  });
 }
 
 async function loadLatestSession() {

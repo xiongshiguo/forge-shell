@@ -115,6 +115,7 @@ impl ModelRouter {
     }
 
     /// 估算任务复杂度
+    /// 语义复杂度估算（用户无感——不显示模型名，只通过费用和响应速度体现）
     pub fn estimate_complexity(&self, intent: &str, context_tokens: usize) -> Complexity {
         let char_count = intent.chars().count();
         let intent_lower = intent.to_lowercase();

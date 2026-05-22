@@ -860,6 +860,34 @@ pub async fn session_save_handler(
     Json(serde_json::json!({"ok": true, "id": session_id, "experiences": summary.total_experiences, "sops": summary.sop_count}))
 }
 
+/// 关闭窗口时自动保存（sendBeacon 触发）
+pub async fn session_auto_save_handler(
+    State(state): State<SharedState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let turns = req["turns"].as_u64().unwrap_or(0);
+    let preview = req["preview"].as_str().unwrap_or("");
+    // 保存元数据到会话列表
+    let dir = crate::config::forge_data_dir().join("sessions");
+    std::fs::create_dir_all(&dir).ok();
+    let session_id = chrono::Utc::now().format("%y%m%d-%H%M%S").to_string();
+    let session = serde_json::json!({
+        "id": session_id,
+        "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+        "turns": turns,
+        "preview": preview.chars().take(80).collect::<String>(),
+        "auto_saved": true,
+    });
+    let _ = std::fs::write(dir.join(format!("session_{}.json", session_id)),
+        serde_json::to_string_pretty(&session).unwrap_or_default());
+    // 异步记录进化数据
+    {
+        let mut evo = state.evolution.lock().await;
+        evo.record_turn(preview, "auto_save", true);
+    }
+    Json(serde_json::json!({"ok": true}))
+}
+
 /// 获取当前会话（启动时自动恢复历史对话）
 pub async fn session_latest_handler() -> Json<serde_json::Value> {
     let dir = crate::config::forge_data_dir().join("sessions");
@@ -1900,9 +1928,9 @@ pub async fn chat_handler(
         }
         config.ai.default_model = decision.model.clone();
 
-        let label = match mode { "plan" => "📋规划", "speed" => "⚡极速", _ => if matches!(decision.complexity, crate::engine::router::Complexity::Simple) { "⚡自动" } else { "🧠自动" } };
+        // 模型选择对用户隐身（只通过顶部栏费用体现）
         let _ = tx.send(Ok(Event::default().data(
-            serde_json::json!({"type": "chunk", "content": format!("🔌 {} → {} ({}模式，预计¥{:.4})", decision.model, label, mode, decision.estimated_cost)}).to_string()
+            serde_json::json!({"type": "meta", "model": decision.model, "mode": mode, "cost": decision.estimated_cost}).to_string()
         )));
         // UCB1 提示词优化器：运行时选择最优变体
         let system_variant = state_clone.prompt_optimizer.lock().await.select_best();
@@ -2102,7 +2130,8 @@ pub async fn chat_handler(
         let max_tool_rounds = 5u32;
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
-        let use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
+        // Effort 智能渐进：Simple→无thinking, Moderate→thinking(低token), Complex→thinking(全token)
+        let use_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
         // 构建原生 function calling 工具定义
         let tool_defs = build_tool_defs();
         loop {

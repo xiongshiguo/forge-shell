@@ -129,6 +129,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/parallel", axum::routing::post(api::parallel_handler))
         .route("/api/logs", get(api::error_logs_handler))
         .route("/api/logs/clear", axum::routing::post(api::error_logs_clear_handler))
+        .route("/api/session/auto-save", axum::routing::post(api::session_auto_save_handler))
         .route("/api/session/latest", get(api::session_latest_handler))
         .route("/api/session/save", axum::routing::post(api::session_save_handler))
         .route("/api/sessions", get(api::sessions_list_handler))

@@ -364,6 +364,23 @@ fn scan_project() -> String {
 }
 
 /// 始终注入的轻量项目上下文（利用 DeepSeek 1M 上下文窗口）
+/// 从 AppState 读取错误日志注入上下文
+fn build_error_context(state: &SharedState) -> String {
+    let diag = state.error_logger.diagnose();
+    let recent = state.error_logger.recent(10);
+    if diag.is_empty() && recent.is_empty() { return String::new(); }
+    let mut ctx = String::from("\n## 近期系统错误（你可以自查修复）\n");
+    for d in &diag { ctx.push_str(&format!("- {}\n", d)); }
+    if !recent.is_empty() {
+        ctx.push_str("\n最近错误详情:\n");
+        for e in &recent {
+            ctx.push_str(&format!("- [{}] {}: {} (×{})\n", e.timestamp, e.component, e.message, e.count));
+        }
+    }
+    ctx.push_str("\n如果以上错误属于代码问题，可用 [TOOL:edit] 修复后 [TOOL:exec:cargo build] 验证。\n");
+    ctx
+}
+
 fn build_project_context() -> String {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut ctx = String::new();
@@ -1870,7 +1887,8 @@ pub async fn chat_handler(
             } else { String::new() }
         } else { String::new() };
 
-        let user_msg = format!("{}{}{}{}", req.message, project_info, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
+        let error_context = build_error_context(&state_clone);
+        let user_msg = format!("{}{}{}{}{}", req.message, project_info, error_context, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
 
         // 复杂任务：双模型辩论制（Pro 主攻 + Flash 审查）
         if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {

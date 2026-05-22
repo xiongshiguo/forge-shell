@@ -1237,8 +1237,16 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
         }
         "save" => {
             let ctx_path = std::path::PathBuf::from("FORGESHELL_CONTEXT.md");
-            match std::fs::write(&ctx_path, arg) {
-                Ok(()) => "已保存到 FORGESHELL_CONTEXT.md".into(),
+            // 追加模式：允许多次保存累积
+            let entry = format!("\n## {}\n{}\n", chrono::Utc::now().format("%m-%d %H:%M"), arg);
+            match std::fs::OpenOptions::new().create(true).append(true).write(true).open(&ctx_path) {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    match writeln!(f, "{}", entry) {
+                        Ok(()) => format!("已追加到 FORGESHELL_CONTEXT.md ({})", arg.chars().take(30).collect::<String>()),
+                        Err(e) => format!("写入失败: {}", e),
+                    }
+                }
                 Err(e) => format!("保存失败: {}", e),
             }
         }

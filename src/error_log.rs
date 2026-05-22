@@ -25,7 +25,10 @@ pub struct ErrorLogger {
 
 impl ErrorLogger {
     pub fn new(log_dir: PathBuf) -> Self {
-        std::fs::create_dir_all(&log_dir).ok();
+        if let Err(e) = std::fs::create_dir_all(&log_dir) {
+            tracing::warn!("无法创建日志目录 {:?}: {}", log_dir, e);
+        }
+        tracing::info!("错误日志目录: {:?}", log_dir);
         // 从磁盘加载历史错误
         let buffer = Self::load_from_disk(&log_dir);
         Self { buffer: Mutex::new(buffer), log_dir }

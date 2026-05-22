@@ -2309,8 +2309,10 @@ pub async fn chat_handler(
         }
 
         if !has_content {
+            let err = "API 返回了空内容，请检查 Key 或额度";
+            state_clone.error_logger.log("api", "error", err, &format!("model={}", decision.model));
             let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
+                serde_json::json!({"type": "error", "message": err}).to_string()
             )));
         }
             }).catch_unwind().await

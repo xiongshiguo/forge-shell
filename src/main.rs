@@ -1,5 +1,6 @@
 mod config;
 mod error;
+mod error_log;
 mod locale;
 mod utils;
 mod platform;

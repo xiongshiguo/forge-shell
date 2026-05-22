@@ -64,6 +64,7 @@ pub struct AppState {
     pub semantic_index: crate::engine::semantic_index::SemanticIndex,
     pub prompt_optimizer: Mutex<crate::engine::prompt_optimizer::PromptOptimizer>,
     pub rate_limiter: RateLimiter,
+    pub error_logger: crate::error_log::ErrorLogger,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -100,7 +101,8 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         ),
         prompt_optimizer: Mutex::new(crate::engine::prompt_optimizer::PromptOptimizer::new()),
-        rate_limiter: RateLimiter::new(50), // 每 IP 每分钟 50 次
+        rate_limiter: RateLimiter::new(50),
+        error_logger: crate::error_log::ErrorLogger::new(crate::config::forge_data_dir().join("logs")),
     });
 
     let app = Router::new()
@@ -125,6 +127,8 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/files", get(api::files_handler))
         .route("/api/explore", get(api::explore_handler))
         .route("/api/parallel", axum::routing::post(api::parallel_handler))
+        .route("/api/logs", get(api::error_logs_handler))
+        .route("/api/logs/clear", axum::routing::post(api::error_logs_clear_handler))
         .route("/api/session/latest", get(api::session_latest_handler))
         .route("/api/session/save", axum::routing::post(api::session_save_handler))
         .route("/api/sessions", get(api::sessions_list_handler))

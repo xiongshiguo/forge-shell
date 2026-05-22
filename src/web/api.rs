@@ -1366,6 +1366,23 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
     }
 }
 
+/// 错误日志查询
+pub async fn error_logs_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let logs = state.error_logger.recent(50);
+    let diag = state.error_logger.diagnose();
+    Json(serde_json::json!({"ok": true, "logs": logs, "diagnosis": diag}))
+}
+
+/// 清空错误日志
+pub async fn error_logs_clear_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    state.error_logger.clear();
+    Json(serde_json::json!({"ok": true}))
+}
+
 /// 提示词优化器统计
 pub async fn prompt_stats_handler(
     State(state): State<SharedState>,
@@ -1770,9 +1787,12 @@ pub async fn chat_handler(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
+        // 提前 clone 用于 panic 日志
+        let log_state = state_clone.clone();
+        let log_msg = req.message.clone();
         let result = {
             use futures::FutureExt;
-            let tx0 = tx.clone(); // 内部用
+            let tx0 = tx.clone();
             std::panic::AssertUnwindSafe(async move {
         let tx = tx0;
         let mut config = state_clone.config.lock().await.clone();
@@ -2047,9 +2067,10 @@ pub async fn chat_handler(
                             Err(e) => {
                                 stream_errors += 1;
                                 if stream_errors == 1 {
-                                    // 第一次错误通知用户
+                                    let err_msg = format!("流异常: {}", e);
+                                    state_clone.error_logger.log("stream", "error", &err_msg, &format!("round={}", tool_round));
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "error", "message": format!("流异常: {}", e)}).to_string()
+                                        serde_json::json!({"type": "error", "message": err_msg}).to_string()
                                     )));
                                 }
                                 // 已有有效内容则优美降级（保留已收到的内容）
@@ -2072,6 +2093,7 @@ pub async fn chat_handler(
                 }
                 Err(e) => {
                     let error_msg = format!("API 调用失败: {}", e);
+                    state_clone.error_logger.log("api", "error", &error_msg, &format!("model={} tokens={}", decision.model, max_out_tokens));
                     let _ = tx.send(Ok(Event::default().data(
                         serde_json::json!({"type": "error", "message": &error_msg}).to_string()
                     )));
@@ -2290,6 +2312,7 @@ pub async fn chat_handler(
                 .map(|s| s.clone())
                 .or_else(|| panic_err.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "未知内部错误".to_string());
+            log_state.error_logger.log("chat", "panic", &msg, &log_msg);
             let _ = tx.send(Ok(Event::default().data(
                 serde_json::json!({"type": "error", "message": format!("🔥 服务异常 (已恢复): {}", msg)}).to_string()
             )));

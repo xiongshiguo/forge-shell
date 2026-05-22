@@ -538,6 +538,55 @@ function formatTokens(n) {
   return n.toString();
 }
 
+// ---- 错误日志 ----
+function toggleErrorPanel() {
+  var el = document.getElementById('error-panel');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if (el.style.display === 'block') refreshErrorLogs();
+}
+
+async function refreshErrorLogs() {
+  try {
+    var r = await fetch('/api/logs'); var d = await r.json();
+    var listEl = document.getElementById('error-log-list');
+    var diagEl = document.getElementById('diagnosis-box');
+    if (d.ok) {
+      var errs = d.logs || [];
+      document.getElementById('err-count').textContent = errs.length;
+      var ind = document.getElementById('err-indicator');
+      if (errs.length > 0) { ind.style.display = 'inline'; ind.style.color = errs.length > 5 ? 'var(--red)' : 'var(--gold)'; }
+      else ind.style.display = 'none';
+
+      listEl.innerHTML = errs.length ? errs.reverse().map(function(e) {
+        var icon = e.level === 'panic' ? '💥' : e.level === 'warn' ? '⚠️' : '❌';
+        return '<div class="err-entry"><div><span class="err-ts">' + e.timestamp + '</span> <span class="err-comp">[' + e.component + ']</span> ' + icon + ' ' + escapeHtml(e.message) + (e.count > 1 ? ' <span class="err-count-badge">×' + e.count + '</span>' : '') + '</div><div class="err-ctx">' + escapeHtml(e.context) + '</div></div>';
+      }).join('') : '<div style="color:var(--green)">✓ 暂无错误</div>';
+
+      if (d.diagnosis && d.diagnosis.length) {
+        diagEl.style.display = 'block';
+        diagEl.innerHTML = d.diagnosis.map(function(f) { return '<div>' + f + '</div>'; }).join('');
+      } else diagEl.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+async function clearErrorLogs() {
+  await fetch('/api/logs/clear', {method:'POST'});
+  refreshErrorLogs();
+}
+
+// 自动周期刷新错误计数
+setInterval(function() {
+  fetch('/api/logs').then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      var c = (d.logs||[]).length;
+      document.getElementById('err-count').textContent = c;
+      var ind = document.getElementById('err-indicator');
+      if (c > 0) { ind.style.display = 'inline'; ind.style.color = c > 5 ? 'var(--red)' : 'var(--gold)'; }
+    }
+  }).catch(function(){});
+}, 30000);
+
 // ---- 复盘 ----
 function setupReview() {
   document.getElementById('session-end-btn').addEventListener('click', showReview);

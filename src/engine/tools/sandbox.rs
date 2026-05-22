@@ -8,7 +8,12 @@ use std::path::Path;
 const RS_COMMANDS: &[&str] = &["cargo check", "cargo test", "cargo build", "cargo fmt", "cargo clippy", "cargo doc"];
 const TOML_COMMANDS: &[&str] = &["cargo check", "cargo update", "cargo tree", "cargo metadata"];
 const MD_COMMANDS: &[&str] = &["git status", "git diff", "git log"];
-const GENERAL_COMMANDS: &[&str] = &["git status", "git diff", "git log", "git branch", "git add", "git commit", "git stash", "git checkout", "git switch", "git restore", "git rebase", "cargo --version", "rustc --version", "ls", "dir", "echo", "type", "rg"];
+const GENERAL_COMMANDS: &[&str] = &[
+    "git status", "git diff", "git log", "git branch", "git add", "git commit", "git stash",
+    "git checkout", "git switch", "git restore", "git rebase", "git clone",
+    "cargo --version", "cargo new", "cargo init", "rustc --version",
+    "ls", "dir", "echo", "type", "rg", "mkdir", "md",
+];
 
 pub struct Sandbox {
     blocked_paths: Vec<String>,

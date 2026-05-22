@@ -2011,8 +2011,7 @@ pub async fn chat_handler(
                 serde_json::to_string_pretty(&starter).unwrap_or_default());
         }
 
-        let error_context = build_error_context(&state_clone);
-        let user_msg = format!("{}{}{}{}{}", req.message, project_info, error_context, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
+        let user_msg = format!("{}{}{}{}", req.message, project_info, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
 
         // 复杂任务：双模型辩论制（Pro 主攻 + Flash 审查）
         if matches!(decision.complexity, crate::engine::router::Complexity::Complex) {
@@ -2151,8 +2150,8 @@ pub async fn chat_handler(
         let history = {
             let mut hist = state_clone.conversation_history.lock().await;
             let h = hist.clone();
-            // 保留最近 16 条消息（8 轮对话），防止上下文溢出
-            if h.len() > 16 { *hist = h[h.len()-16..].to_vec(); }
+            // 保留最近 8 条消息（4 轮对话）
+            if h.len() > 8 { *hist = h[h.len()-8..].to_vec(); }
             h
         };
 
@@ -2409,9 +2408,9 @@ pub async fn chat_handler(
                     break;
                 }
             }
-            // 保留最近 16 条
+            // 保留最近 8 条
             let n = hist.len();
-            if n > 16 { *hist = hist.split_off(n - 16); }
+            if n > 8 { *hist = hist.split_off(n - 8); }
 
             // 落盘：每次对话自动保存，重启可恢复
             let dir = crate::config::forge_data_dir().join("sessions");

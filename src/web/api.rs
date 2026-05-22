@@ -16,6 +16,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 pub struct ChatRequest {
     pub message: String,
     pub mode: Option<String>,
+    pub model_pref: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1914,17 +1915,27 @@ pub async fn chat_handler(
         );
         let mut decision = router.decide(&req.message, 0);
 
-        // 模式覆盖：规划强制Pro，极速强制Flash，助手自动
-        match mode {
-            "plan" => {
-                decision.model = config.ai.default_model.clone();
-                decision.estimated_cost *= 1.5;
+        // 用户模型偏好覆盖 Router（auto 时不覆盖）
+        let model_pref = req.model_pref.as_deref().unwrap_or("auto");
+        match model_pref {
+            "pro" => { decision.model = config.ai.default_model.clone(); }
+            "flash" => { decision.model = config.ai.flash_model.clone(); }
+            "local" => { decision.model = "ollama".into(); }
+            _ => {} // auto: Router 自动决定
+        }
+        // 模式覆盖：规划强制Pro，极速强制Flash（仅在 auto 模式下生效）
+        if model_pref == "auto" {
+            match mode {
+                "plan" => {
+                    decision.model = config.ai.default_model.clone();
+                    decision.estimated_cost *= 1.5;
+                }
+                "speed" => {
+                    decision.model = config.ai.flash_model.clone();
+                    decision.estimated_cost *= 0.3;
+                }
+                _ => {}
             }
-            "speed" => {
-                decision.model = config.ai.flash_model.clone();
-                decision.estimated_cost *= 0.3;
-            }
-            _ => {} // 助手模式：自动
         }
         config.ai.default_model = decision.model.clone();
 

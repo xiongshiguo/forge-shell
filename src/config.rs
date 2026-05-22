@@ -37,6 +37,12 @@ pub struct AiConfig {
     /// 简单任务模型（快速、便宜）
     #[serde(default = "default_flash_model")]
     pub flash_model: String,
+    /// 用户模型偏好: auto(智能) / pro / flash / local
+    #[serde(default = "default_model_pref")]
+    pub model_preference: String,
+    /// Ollama 本地模型端点
+    #[serde(default = "default_ollama_base")]
+    pub ollama_base: String,
     /// API 地址
     #[serde(default = "default_api_base")]
     pub api_base: String,
@@ -53,6 +59,9 @@ pub struct AiConfig {
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
 }
+
+fn default_model_pref() -> String { "auto".into() }
+fn default_ollama_base() -> String { String::new() }
 
 fn default_model() -> String {
     "deepseek-v4-pro".into()
@@ -78,6 +87,8 @@ impl Default for AiConfig {
         Self {
             default_model: default_model(),
             flash_model: default_flash_model(),
+            model_preference: default_model_pref(),
+            ollama_base: default_ollama_base(),
             api_base: default_api_base(),
             api_key: String::new(),
             max_tokens: default_max_tokens(),

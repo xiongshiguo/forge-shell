@@ -1,6 +1,11 @@
 // 熔炉 Web UI
 
 var currentMode = 'assist';
+var currentModelPref = 'auto';
+
+function setModelPref(val) {
+  currentModelPref = val;
+}
 
 // 面板折叠
 function toggleSection(id) {
@@ -170,7 +175,7 @@ async function streamChat(msg) {
   setStatus('思考中…');
 
   try {
-    var resp = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, mode:currentMode}) });
+    var resp = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, mode:currentMode, model_pref:currentModelPref}) });
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var buffer = '';

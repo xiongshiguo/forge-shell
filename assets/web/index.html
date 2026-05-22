@@ -37,10 +37,16 @@
       <span class="logo">🔥 熔炉</span>
     </div>
     <div class="mode-selector">
-      <button class="mode-btn" data-mode="plan">规划</button>
-      <button class="mode-btn active" data-mode="assist">助手</button>
-      <button class="mode-btn" data-mode="speed">极速</button>
+      <button class="mode-btn" data-mode="plan" title="只分析不修改">规划</button>
+      <button class="mode-btn active" data-mode="assist" title="逐步执行说明">助手</button>
+      <button class="mode-btn" data-mode="speed" title="自动完成汇总">极速</button>
     </div>
+    <select id="model-select" class="model-select" onchange="setModelPref(this.value)" title="模型偏好">
+      <option value="auto" selected>🧠 智能</option>
+      <option value="pro">💎 Pro</option>
+      <option value="flash">⚡ Flash</option>
+      <option value="local">🏠 本地</option>
+    </select>
     <div class="topbar-right">
       <a href="https://forgeshell.cn" target="_blank" class="nav-link" title="社区官网">🌐 社区</a>
       <a href="https://forgeshell.cn/docs" target="_blank" class="nav-link" title="文档">📖 文档</a>

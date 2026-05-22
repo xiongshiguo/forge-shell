@@ -42,6 +42,12 @@ body { font-family:var(--font); background:var(--bg); color:var(--text); height:
 .mode-btn { padding:5px 14px; border:none; border-radius:6px; background:transparent; color:var(--text-dim); cursor:pointer; font-size:12px; transition:all .2s; }
 .mode-btn:hover { color:var(--text); }
 .mode-btn.active { background:var(--purple); color:white; box-shadow:0 2px 8px var(--purple-glow); }
+.model-select {
+  margin-left:6px; padding:4px 8px; font-size:11px;
+  background:var(--bg3); color:var(--text); border:1px solid rgba(255,255,255,0.08);
+  border-radius:6px; cursor:pointer; outline:none; font-family:var(--font);
+}
+.model-select:focus { border-color:var(--purple); }
 .topbar-right { display:flex; align-items:center; gap:14px; font-size:12px; }
 #session-end-btn { padding:4px 12px; background:rgba(255,255,255,0.06); color:var(--text-dim); border:1px solid rgba(255,255,255,0.08); border-radius:6px; cursor:pointer; font-size:11px; transition:all .15s; }
 #session-end-btn:hover { background:rgba(255,255,255,0.1); color:var(--text); }

@@ -96,27 +96,32 @@ impl InferenceClient {
         messages: Vec<ChatMessage>,
     ) -> Result<impl Stream<Item = Result<StreamChunk, ForgeError>>, ForgeError> {
         self.tool_acc.clear();
-        let tool_choice = if self.tools.is_some() { Some("auto".to_string()) } else { None };
+        let is_ollama = self.model == "ollama";
+        let tool_choice = if !is_ollama && self.tools.is_some() { Some("auto".to_string()) } else { None };
         let body = ChatRequest {
-            model: self.model.clone(),
+            model: if is_ollama { "deepseek-r1:latest".into() } else { self.model.clone() },
             messages,
             stream: true,
             temperature: if self.thinking_enabled { None } else { Some(0.0) },
             max_tokens: self.max_tokens,
-            thinking: if self.thinking_enabled {
+            thinking: if self.thinking_enabled && !is_ollama {
                 Some(ThinkingConfig { thinking_type: "enabled".into() })
             } else { None },
-            tools: self.tools.clone(),
+            tools: if is_ollama { None } else { self.tools.clone() },
             tool_choice,
         };
 
-        let url = format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'));
-        let resp = self.http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await?;
+        let is_ollama = self.model == "ollama";
+        let url = if is_ollama {
+            "http://localhost:11434/v1/chat/completions".to_string()
+        } else {
+            format!("{}/v1/chat/completions", self.api_base.trim_end_matches('/'))
+        };
+        let mut req = self.http.post(&url);
+        if !is_ollama {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let resp = req.json(&body).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

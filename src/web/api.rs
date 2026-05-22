@@ -1016,6 +1016,76 @@ fn urlencoding(s: &str) -> String {
 }
 
 /// 工具调用闭环内联执行器 — 在后端直接执行工具，结果回注对话
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_native_args_read_simple() {
+        let result = convert_native_args("read", r#"{"path":"src/main.rs"}"#);
+        assert_eq!(result, "src/main.rs");
+    }
+
+    #[test]
+    fn test_convert_native_args_read_with_lines() {
+        let result = convert_native_args("read", r#"{"path":"src/main.rs","start":10,"end":20}"#);
+        assert_eq!(result, "src/main.rs:10:20");
+    }
+
+    #[test]
+    fn test_convert_native_args_write() {
+        let result = convert_native_args("write", r#"{"path":"test.rs","content":"fn main(){}"}"#);
+        assert_eq!(result, "test.rs:fn main(){}");
+    }
+
+    #[test]
+    fn test_convert_native_args_edit() {
+        let result = convert_native_args("edit", r#"{"path":"src/lib.rs","start":5,"end":10,"content":"new code"}"#);
+        assert_eq!(result, "src/lib.rs:5:10:new code");
+    }
+
+    #[test]
+    fn test_convert_native_args_search() {
+        let result = convert_native_args("search", r#"{"query":"async fn"}"#);
+        assert_eq!(result, "async fn");
+    }
+
+    #[test]
+    fn test_convert_native_args_non_json() {
+        let result = convert_native_args("exec", "cargo test");
+        assert_eq!(result, "cargo test");
+    }
+
+    #[test]
+    fn test_convert_native_args_invalid_json() {
+        let result = convert_native_args("read", "not json at all");
+        assert_eq!(result, "not json at all");
+    }
+
+    #[test]
+    fn test_build_tool_defs_count() {
+        let defs = build_tool_defs();
+        assert_eq!(defs.len(), 11, "Should have 11 tool definitions");
+        let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
+        assert!(names.contains(&"read"));
+        assert!(names.contains(&"write"));
+        assert!(names.contains(&"edit"));
+        assert!(names.contains(&"exec"));
+        assert!(names.contains(&"web"));
+    }
+
+    #[test]
+    fn test_build_tool_defs_valid_json_schema() {
+        for def in &build_tool_defs() {
+            assert_eq!(def.tool_type, "function");
+            assert!(!def.function.name.is_empty());
+            assert!(!def.function.description.is_empty());
+            let params = &def.function.parameters;
+            assert!(params.get("type").is_some(), "{} missing type", def.function.name);
+        }
+    }
+}
+
 /// 将原生 function calling 的 JSON 参数转为文本格式
 fn convert_native_args(tool: &str, json_args: &str) -> String {
     if !json_args.starts_with('{') { return json_args.to_string(); }

@@ -331,3 +331,181 @@ impl ChatMessage {
         Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None, reasoning_content: None }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === SSE 解析测试 ===
+
+    #[test]
+    fn test_parse_content_chunk() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        let sse = r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#;
+        let chunk = client.parse_sse_line(sse).unwrap();
+        assert_eq!(chunk.content, "Hello");
+        assert!(chunk.reasoning_content.is_empty());
+        assert!(chunk.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_reasoning_content() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: true,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        let sse = r#"data: {"choices":[{"delta":{"reasoning_content":"Let me think...","content":""}}]}"#;
+        let chunk = client.parse_sse_line(sse).unwrap();
+        assert_eq!(chunk.reasoning_content, "Let me think...");
+    }
+
+    #[test]
+    fn test_parse_tool_call_delta() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        // Tool call accumulates in tool_acc, only flushed on finish_reason
+        let sse = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"src/main.rs\"}"}}]},"finish_reason":"tool_calls"}]}"#;
+        let chunk = client.parse_sse_line(sse).unwrap();
+        assert_eq!(chunk.tool_calls.len(), 1);
+        let tc = &chunk.tool_calls[0];
+        assert_eq!(tc.name, "read");
+        assert_eq!(tc.id, "call_1");
+        assert_eq!(tc.arguments, "{\"path\":\"src/main.rs\"}");
+    }
+
+    #[test]
+    fn test_parse_tool_call_streaming_args() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        // First chunk: id and name
+        client.parse_sse_line(r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"write","arguments":""}}]}}]}"#).ok();
+        // Second chunk: partial arguments
+        client.parse_sse_line(r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"f"}}]}}]}"#).ok();
+        // Third chunk: remaining arguments
+        client.parse_sse_line(r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"oo.rs\",\"content\":\"fn main(){}\"}"}}]}}]}"#).ok();
+        // Final chunk with finish_reason to flush
+        let chunk = client.parse_sse_line(r#"data: {"choices":[{"finish_reason":"tool_calls"}]}"#).unwrap();
+        assert!(!chunk.tool_calls.is_empty(), "Tool calls should be flushed on finish");
+        let tc = &chunk.tool_calls[0];
+        assert_eq!(tc.name, "write");
+        assert_eq!(tc.id, "call_x");
+        assert!(tc.arguments.contains("foo.rs"), "Arguments should accumulate across chunks: {}", tc.arguments);
+    }
+
+    #[test]
+    fn test_parse_usage_stats() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        let sse = r#"data: {"choices":[{"delta":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}"#;
+        client.parse_sse_line(sse).ok();
+        assert_eq!(client.total_usage.prompt_tokens, 100);
+        assert_eq!(client.total_usage.cache_hit_tokens, 80);
+    }
+
+    #[test]
+    fn test_parse_done_signal() {
+        let mut client = InferenceClient {
+            api_key: String::new(), api_base: String::new(), model: String::new(),
+            http: reqwest::Client::new(), total_usage: TokenUsage::default(),
+            max_tokens: 8192, thinking_enabled: false,
+            tool_acc: std::collections::HashMap::new(), tools: None,
+        };
+        let chunk = client.parse_sse_line("data: [DONE]").unwrap();
+        assert_eq!(chunk.finish_reason, Some("stop".into()));
+    }
+
+    // === ChatMessage 序列化测试 ===
+
+    #[test]
+    fn test_message_always_has_content_field() {
+        // Bug v0.16.5: tool_calls 消息的 content 不能缺失
+        let msg = ChatMessage {
+            role: "assistant".into(), content: String::new(),
+            tool_calls: Some(vec![ToolCallDelta {
+                id: Some("call_1".into()), call_type: Some("function".into()),
+                function: Some(ToolCallFunc { name: Some("read".into()), arguments: Some("{}".into()) }),
+                index: None,
+            }]),
+            tool_call_id: None, reasoning_content: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"content\""), "content must always be in JSON: {}", json);
+        assert!(json.contains("tool_calls"), "tool_calls must be present: {}", json);
+    }
+
+    #[test]
+    fn test_tool_result_has_tool_call_id() {
+        let msg = ChatMessage::tool_result("call_abc", "result text");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("tool_call_id"));
+        assert!(json.contains("call_abc"));
+    }
+
+    #[test]
+    fn test_assistant_reasoning_preserved() {
+        let msg = ChatMessage::assistant_with_reasoning("answer", "I need to think...");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("reasoning_content"));
+        assert!(json.contains("I need to think..."));
+    }
+
+    #[test]
+    fn test_tool_def_json_schema() {
+        let def = ToolDef {
+            tool_type: "function".into(),
+            function: ToolFunction {
+                name: "read".into(),
+                description: "Read a file".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            },
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("function"));
+        assert!(json.contains("read"));
+        assert!(json.contains("parameters"));
+    }
+
+    #[test]
+    fn test_chat_request_includes_tools_when_set() {
+        let tools = vec![ToolDef {
+            tool_type: "function".into(),
+            function: ToolFunction {
+                name: "search".into(), description: "search".into(),
+                parameters: serde_json::json!({"type":"object","properties":{}}),
+            },
+        }];
+        let req = ChatRequest {
+            model: "deepseek-v4-pro".into(),
+            messages: vec![ChatMessage::user("hello")],
+            stream: true,
+            temperature: None,
+            max_tokens: 8192,
+            thinking: None,
+            tools: Some(tools),
+            tool_choice: Some("auto".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"tools\""));
+        assert!(json.contains("\"tool_choice\""));
+        assert!(json.contains("\"auto\""));
+    }
+}

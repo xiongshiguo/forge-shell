@@ -155,6 +155,18 @@ function sendMessage() {
   var text = inp.value.trim();
   if (!text) return;
   inp.value = '';
+
+  // 如果 AI 正在回复中，先保存已收到的内容（防止用户误触丢失）
+  var areaEl = document.getElementById('streaming-area');
+  var streamEl = document.getElementById('streaming-content');
+  if (areaEl.style.display !== 'none' && streamEl.textContent.trim()) {
+    var partial = streamEl.textContent;
+    addMsg('system', '⚠️ 上一条回复被中断，以下是已收到的内容：');
+    addMsg('assistant', partial);
+    streamEl.textContent = '';
+    areaEl.style.display = 'none';
+  }
+
   addMsg('user', text);
   streamChat(text);
 }

@@ -2342,9 +2342,10 @@ pub async fn chat_handler(
                 let mut asst_msg = crate::engine::inference::ChatMessage::assistant_with_reasoning(&round_text, &round_reasoning);
                 asst_msg.tool_calls = Some(tc_deltas);
                 conversation.push(asst_msg);
-                // 逐条 tool 结果
-                for (i, (tool_name, result)) in tool_results.iter().enumerate() {
-                    let call_id = last_chunk_tool_calls.get(i).map(|tc| tc.id.clone()).unwrap_or_default();
+                // 逐条 tool 结果——按名称匹配 tool_call_id（不乱序索引）
+                let tc_by_name: std::collections::HashMap<&str, &crate::engine::inference::AccumulatedToolCall> = last_chunk_tool_calls.iter().map(|tc| (tc.name.as_str(), tc)).collect();
+                for (tool_name, result) in tool_results.iter() {
+                    let call_id = tc_by_name.get(tool_name.as_str()).map(|tc| tc.id.clone()).unwrap_or_default();
                     conversation.push(crate::engine::inference::ChatMessage::tool_result(&call_id, result));
                 }
             } else {

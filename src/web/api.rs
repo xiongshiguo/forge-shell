@@ -2177,11 +2177,11 @@ pub async fn chat_handler(
             build_tool_defs()
         };
         // Effort 智能渐进：Simple→无thinking, Moderate/Complex→thinking(仅首轮，后续关)
-        let initial_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
+        // thinking 一旦启用全程保持（reasoning_content 消息不能被无thinking请求处理）
+        let use_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
         loop {
-            let this_round_thinking = initial_thinking && tool_round == 0;
             let mut client = match crate::engine::inference::InferenceClient::new(&config)
-                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(this_round_thinking).with_tools(tool_defs.clone())) {
+                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking).with_tools(tool_defs.clone())) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(

@@ -79,7 +79,7 @@ fn default_temperature() -> f32 {
     0.0
 }
 fn default_timeout() -> u64 {
-    300
+    600
 }
 
 impl Default for AiConfig {

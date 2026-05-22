@@ -2141,13 +2141,13 @@ pub async fn chat_handler(
         let max_tool_rounds = 5u32;
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
-        // Effort 智能渐进：Simple→无thinking, Moderate→thinking(低token), Complex→thinking(全token)
-        let use_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
-        // 构建原生 function calling 工具定义
+        // Effort 智能渐进：Simple→无thinking, Moderate/Complex→thinking(仅首轮，后续关)
+        let initial_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
         let tool_defs = build_tool_defs();
         loop {
+            let this_round_thinking = initial_thinking && tool_round == 0;
             let mut client = match crate::engine::inference::InferenceClient::new(&config)
-                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking).with_tools(tool_defs.clone())) {
+                .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(this_round_thinking).with_tools(tool_defs.clone())) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Ok(Event::default().data(

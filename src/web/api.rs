@@ -2018,9 +2018,11 @@ pub async fn chat_handler(
             match stream_result {
                 Ok(mut stream) => {
                     use futures::StreamExt;
+                    let mut stream_errors = 0u32;
                     while let Some(chunk_result) = stream.next().await {
                         match chunk_result {
                             Ok(chunk) => {
+                                stream_errors = 0; // 重置计数
                                 if !chunk.content.is_empty() {
                                     has_content = true;
                                     round_text.push_str(&chunk.content);
@@ -2038,9 +2040,18 @@ pub async fn chat_handler(
                                 }
                             }
                             Err(e) => {
+                                stream_errors += 1;
+                                let err_msg = format!("流式错误: {} (第{}次)", e, stream_errors);
                                 let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "error", "message": format!("流式错误: {}", e)}).to_string()
+                                    serde_json::json!({"type": "error", "message": &err_msg}).to_string()
                                 )));
+                                // 连续3次错误则中断，防止无限重试
+                                if stream_errors >= 3 {
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "error", "message": "流已中断（连续错误过多）"}).to_string()
+                                    )));
+                                    break;
+                                }
                             }
                         }
                     }

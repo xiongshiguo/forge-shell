@@ -444,6 +444,13 @@ fn build_project_context() -> String {
     ctx
 }
 
+/// 规划模式：仅只读工具（物理禁止修改文件）
+fn build_readonly_tools() -> Vec<crate::engine::inference::ToolDef> {
+    build_tool_defs().into_iter()
+        .filter(|t| matches!(t.function.name.as_str(), "read" | "search" | "glob" | "web" | "lsp" | "semantic" | "snap" | "community-fix"))
+        .collect()
+}
+
 /// 构建原生 function calling 工具定义（DeepSeek V4 OpenAI 兼容格式）
 fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
     use crate::engine::inference::{ToolDef, ToolFunction};
@@ -2141,9 +2148,14 @@ pub async fn chat_handler(
         let max_tool_rounds = 5u32;
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
+        // 规划模式禁用写工具（物理强制执行）
+        let tool_defs = if mode == "plan" {
+            build_readonly_tools()
+        } else {
+            build_tool_defs()
+        };
         // Effort 智能渐进：Simple→无thinking, Moderate/Complex→thinking(仅首轮，后续关)
         let initial_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
-        let tool_defs = build_tool_defs();
         loop {
             let this_round_thinking = initial_thinking && tool_round == 0;
             let mut client = match crate::engine::inference::InferenceClient::new(&config)

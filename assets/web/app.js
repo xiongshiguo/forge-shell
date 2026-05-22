@@ -170,7 +170,17 @@ async function streamChat(msg) {
         }
       }
     }
-  } catch(e) { addMsg('error', '连接失败: ' + e.message); }
+  } catch(e) {
+    // 保留已接收的内容
+    var partialText = streamEl.textContent;
+    if (partialText && partialText.trim()) {
+      addMsg('system', '⚠️ 连接中断，以下是已收到的内容：');
+      addMsg('assistant', partialText);
+    }
+    document.getElementById('streaming-area').style.display = 'none';
+    streamEl.textContent = '';
+    addMsg('error', '❌ 连接失败: ' + (e.message || 'network error'));
+  }
 }
 
 function handleSSE(data) {

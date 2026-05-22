@@ -1770,6 +1770,11 @@ pub async fn chat_handler(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
+        let result = {
+            use futures::FutureExt;
+            let tx0 = tx.clone(); // 内部用
+            std::panic::AssertUnwindSafe(async move {
+        let tx = tx0;
         let mut config = state_clone.config.lock().await.clone();
 
         // 模型路由：模式 × 复杂度 动态选择模型
@@ -2276,6 +2281,17 @@ pub async fn chat_handler(
         if !has_content {
             let _ = tx.send(Ok(Event::default().data(
                 serde_json::json!({"type": "error", "message": "API 返回了空内容，请检查 Key 是否正确"}).to_string()
+            )));
+        }
+            }).catch_unwind().await
+        };
+        if let Err(panic_err) = result {
+            let msg: String = panic_err.downcast_ref::<String>()
+                .map(|s| s.clone())
+                .or_else(|| panic_err.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "未知内部错误".to_string());
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "error", "message": format!("🔥 服务异常 (已恢复): {}", msg)}).to_string()
             )));
         }
     });

@@ -95,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("AI 后端: {}", cfg.ai.default_model);
     tracing::info!("缓存命中率目标: ≥97%");
 
+    // 启动前自动清理旧进程，解决"更新后仍在跑旧版"问题
+    kill_old_instance().await;
+
     if cli.tui {
         let mut app = tui::App::new(cfg)?;
         app.run()?;
@@ -104,4 +107,32 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// 检查并杀掉之前遗留的 forge-shell 进程
+async fn kill_old_instance() {
+    let pid_path = config::forge_data_dir().join("forge.pid");
+    // 读取旧 PID
+    if let Ok(old_pid) = std::fs::read_to_string(&pid_path) {
+        let old_pid = old_pid.trim();
+        if !old_pid.is_empty() {
+            tracing::info!("发现旧进程 PID={}，尝试关闭", old_pid);
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", old_pid, "/F"])
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = std::process::Command::new("kill").args([old_pid]).output();
+            }
+            // 等待旧进程释放端口
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    // 写入当前 PID
+    let current_pid = std::process::id().to_string();
+    let _ = std::fs::write(&pid_path, &current_pid);
+    tracing::info!("当前进程 PID={}", current_pid);
 }

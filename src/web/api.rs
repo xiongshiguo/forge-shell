@@ -1942,27 +1942,9 @@ pub async fn chat_handler(
 
     tokio::spawn(async move {
         // 提前 clone 用于 panic 日志
-        let log_state = state_clone.clone();
-        let log_msg = req.message.clone();
-        let result = {
-            use futures::FutureExt;
-            let tx0 = tx.clone();
-            std::panic::AssertUnwindSafe(async move {
-        let tx = tx0;
-        tracing::info!("[trace] 获取config锁");
-        let config_guard = match tokio::time::timeout(std::time::Duration::from_secs(10), state_clone.config.lock()).await {
-            Ok(g) => g,
-            Err(_) => {
-                tracing::error!("[trace] 获取config锁超时");
-                let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "error", "message": "服务繁忙（获取锁超时）"}).to_string()
-                )));
-                return;
-            }
-        };
-        let mut config = config_guard.clone();
-        drop(config_guard);
-        tracing::info!("[trace] config锁已释放");
+        let _ = tx.send(Ok(Event::default().data("{\"type\":\"trace\",\"msg\":\"start\"}")));
+        let mut config = state_clone.config.lock().await.clone();
+        let _ = tx.send(Ok(Event::default().data("{\"type\":\"trace\",\"msg\":\"post_config\"}")));
 
         // 模型路由：模式 × 复杂度 动态选择模型
         let mode = req.mode.as_deref().unwrap_or("assist");
@@ -2001,7 +1983,10 @@ pub async fn chat_handler(
             serde_json::json!({"type": "meta", "model": decision.model, "mode": mode, "cost": decision.estimated_cost}).to_string()
         )));
         // UCB1 提示词优化器：运行时选择最优变体
-        let system_variant = state_clone.prompt_optimizer.lock().await.select_best();
+        let system_variant = match tokio::time::timeout(std::time::Duration::from_secs(5), state_clone.prompt_optimizer.lock()).await {
+            Ok(g) => g.select_best(),
+            Err(_) => "v1-full".to_string(),
+        };
         let is_flash = decision.model.contains("flash");
         let system_msg = if is_flash {
             crate::system_prompt::get_system_prompt_compact()
@@ -2478,18 +2463,6 @@ pub async fn chat_handler(
             state_clone.error_logger.log("api", "error", err, &format!("model={}", decision.model));
             let _ = tx.send(Ok(Event::default().data(
                 serde_json::json!({"type": "error", "message": err}).to_string()
-            )));
-        }
-            }).catch_unwind().await
-        };
-        if let Err(panic_err) = result {
-            let msg: String = panic_err.downcast_ref::<String>()
-                .map(|s| s.clone())
-                .or_else(|| panic_err.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_else(|| "未知内部错误".to_string());
-            log_state.error_logger.log("chat", "panic", &msg, &log_msg);
-            let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "error", "message": format!("🔥 服务异常 (已恢复): {}", msg)}).to_string()
             )));
         }
     });

@@ -98,6 +98,8 @@ impl InferenceClient {
         self.tool_acc.clear();
         let is_ollama = self.model == "ollama";
         let tool_choice = if !is_ollama && self.tools.is_some() { Some("auto".to_string()) } else { None };
+        // 消息格式校验+自动修复（防止之前反复出现的 400 错误）
+        let messages = validate_messages(messages, self.thinking_enabled);
         let body = ChatRequest {
             model: if is_ollama { "deepseek-r1:latest".into() } else { self.model.clone() },
             messages,
@@ -345,6 +347,64 @@ impl ChatMessage {
     pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
         Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None, reasoning_content: None }
     }
+}
+
+/// 消息格式校验+自动修复。在每次 API 调用前运行，防止：
+/// 1. tool_calls 后缺 tool 消息 → 补齐空结果
+/// 2. content 字段缺失 → 补空字符串
+/// 3. thinking 关闭但有 reasoning_content → 清除
+/// 4. tool_call_id 为空 → 生成占位 ID
+fn validate_messages(mut msgs: Vec<ChatMessage>, thinking_enabled: bool) -> Vec<ChatMessage> {
+    // 修复 3: thinking 关闭时清除所有 reasoning_content
+    if !thinking_enabled {
+        for m in &mut msgs {
+            if m.role == "assistant" { m.reasoning_content = None; }
+        }
+    }
+
+    // 修复 4: tool 消息的 tool_call_id 为空时补充
+    for m in &mut msgs {
+        if m.role == "tool" && m.tool_call_id.as_deref().unwrap_or("").is_empty() {
+            m.tool_call_id = Some("call_fixed".into());
+        }
+    }
+
+    // 修复 1: 检查每个 assistant+tool_calls 后是否有足够 tool 消息
+    let mut fixed = Vec::new();
+    let mut pending_tool_ids: Vec<String> = Vec::new();
+    for m in msgs {
+        let is_assistant_with_tools = m.role == "assistant" && m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
+        let is_tool = m.role == "tool";
+
+        if is_assistant_with_tools {
+            // 先把上一轮的 pending 补齐
+            for id in pending_tool_ids.drain(..) {
+                fixed.push(ChatMessage::tool_result(&id, "(auto-fixed)"));
+            }
+            // 收集本轮需要的 tool_call_ids
+            if let Some(ref tc) = m.tool_calls {
+                pending_tool_ids = tc.iter().filter_map(|t| t.id.clone()).collect();
+            }
+        } else if is_tool {
+            if let Some(ref id) = m.tool_call_id {
+                pending_tool_ids.retain(|x| x != id);
+            }
+        }
+        fixed.push(m);
+    }
+    // 末尾补齐
+    for id in pending_tool_ids.drain(..) {
+        fixed.push(ChatMessage::tool_result(&id, "(auto-fixed)"));
+    }
+
+    // 修复 2: 确保所有消息有 content 字段
+    for m in &mut fixed {
+        if m.content.is_empty() && m.tool_calls.is_none() && m.role != "tool" {
+            m.content = String::new(); // 空串但存在
+        }
+    }
+
+    fixed
 }
 
 #[cfg(test)]

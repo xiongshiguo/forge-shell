@@ -104,7 +104,7 @@ impl InferenceClient {
             model: if is_ollama { "deepseek-r1:latest".into() } else { self.model.clone() },
             messages,
             stream: true,
-            temperature: if self.thinking_enabled { None } else { Some(0.0) },
+            temperature: None, // 默认温度，让 DeepSeek 自行处理
             max_tokens: self.max_tokens,
             thinking: if self.thinking_enabled && !is_ollama {
                 Some(ThinkingConfig { thinking_type: "enabled".into() })

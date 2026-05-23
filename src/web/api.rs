@@ -2194,9 +2194,9 @@ pub async fn chat_handler(
         } else {
             build_tool_defs()
         };
-        // Effort 智能渐进：Simple→无thinking, Moderate/Complex→thinking(仅首轮，后续关)
+        // 思考模式：仅 Complex 任务启用（Moderate 也走思考会显著增加首响延迟）
         // thinking 一旦启用全程保持（reasoning_content 消息不能被无thinking请求处理）
-        let use_thinking = !matches!(decision.complexity, crate::engine::router::Complexity::Simple);
+        let use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
         loop {
             let mut client = match crate::engine::inference::InferenceClient::new(&config)
                 .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking).with_tools(tool_defs.clone())) {

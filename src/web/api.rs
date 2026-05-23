@@ -1949,7 +1949,17 @@ pub async fn chat_handler(
             let tx0 = tx.clone();
             std::panic::AssertUnwindSafe(async move {
         let tx = tx0;
-        let mut config = state_clone.config.lock().await.clone();
+        let config_guard = match tokio::time::timeout(std::time::Duration::from_secs(10), state_clone.config.lock()).await {
+            Ok(g) => g,
+            Err(_) => {
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "error", "message": "服务繁忙（获取锁超时）"}).to_string()
+                )));
+                return;
+            }
+        };
+        let mut config = config_guard.clone();
+        drop(config_guard);
 
         // 模型路由：模式 × 复杂度 动态选择模型
         let mode = req.mode.as_deref().unwrap_or("assist");
@@ -2004,16 +2014,16 @@ pub async fn chat_handler(
 
         // L2: 项目上下文注入——利用 DeepSeek 1M 上下文能力
         let project_info = {
-            let new_fp = compute_fingerprint();
+            let new_fp = tokio::task::spawn_blocking(compute_fingerprint).await.unwrap_or_default();
             let mut old_fp = state_clone.project_fingerprint.lock().await;
-            // 10秒超时保护（git/文件IO可能因权限/网络等原因挂起）
             let always_ctx = tokio::time::timeout(std::time::Duration::from_secs(10), build_project_context())
                 .await.unwrap_or_else(|_| String::from("(项目上下文中断)"));
             if *old_fp == new_fp {
                 format!("\n\n## 当前项目环境\n{}", always_ctx)
             } else {
                 *old_fp = new_fp;
-                format!("\n\n## 当前项目环境\n{}\n{}", always_ctx, scan_project())
+                let scan = tokio::task::spawn_blocking(scan_project).await.unwrap_or_default();
+                format!("\n\n## 当前项目环境\n{}\n{}", always_ctx, scan)
             }
         };
 

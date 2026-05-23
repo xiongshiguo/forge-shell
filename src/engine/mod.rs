@@ -1,5 +1,6 @@
 pub mod context;
 pub mod cache;
+pub mod conversation;
 pub mod inference;
 pub mod tools;
 pub mod memory;

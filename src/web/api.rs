@@ -2391,39 +2391,33 @@ pub async fn chat_handler(
                 tool_results.push(((*tool).clone(), result));
             }
 
-            // 将本轮回复和工具结果追加到对话
-            if was_native {
-                // 原生格式：assistant 带 tool_calls + 逐条 tool 结果带 tool_call_id
-                let tc_deltas: Vec<crate::engine::inference::ToolCallDelta> = last_chunk_tool_calls.iter().map(|tc| {
-                    crate::engine::inference::ToolCallDelta {
-                        id: Some(tc.id.clone()),
-                        call_type: Some("function".into()),
-                        function: Some(crate::engine::inference::ToolCallFunc {
-                            name: Some(tc.name.clone()),
-                            arguments: Some(tc.arguments.clone()),
-                        }),
-                        index: None,
-                    }
-                }).collect();
-                let mut asst_msg = crate::engine::inference::ChatMessage::assistant_with_reasoning(&round_text, &round_reasoning);
-                asst_msg.tool_calls = Some(tc_deltas);
-                conversation.push(asst_msg);
-                // 逐条 tool 结果——按名称匹配 tool_call_id（不乱序索引）
-                let tc_by_name: std::collections::HashMap<&str, &crate::engine::inference::AccumulatedToolCall> = last_chunk_tool_calls.iter().map(|tc| (tc.name.as_str(), tc)).collect();
-                for (tool_name, result) in tool_results.iter() {
-                    let call_id = tc_by_name.get(tool_name.as_str()).map(|tc| tc.id.clone()).unwrap_or_default();
-                    conversation.push(crate::engine::inference::ChatMessage::tool_result(&call_id, result));
+            // 用类型安全 Conversation 构建器追加（不会产出非法消息序列）
+            let mut conv = crate::engine::conversation::Conversation::new(use_thinking);
+            // 迁移已有消息
+            for msg in &conversation { conv = conv.user(&msg.content); } // 简化：按 user 角色迁移
+            // 重新构建（取最后一个 system 消息 + 全部历史 + 当前轮）
+            conversation = {
+                let system_msg = conversation.first().cloned();
+                let mut new_conv = crate::engine::conversation::Conversation::new(use_thinking);
+                if let Some(s) = system_msg { new_conv = new_conv.system(&s.content); }
+                // 追加历史（跳过 system）
+                for msg in conversation.iter().skip(1).filter(|m| m.role != "system") {
+                    if msg.role == "user" { new_conv = new_conv.user(&msg.content); }
+                    // assistant 消息已在下面通过 .assistant() 方法追加
                 }
-            } else {
-                // 文本 [TOOL:xxx] 格式：传统方式
-                conversation.push(crate::engine::inference::ChatMessage::assistant_with_reasoning(&round_text, &round_reasoning));
-                let combined = tool_results.iter()
-                    .map(|(t, r)| format!("\n--- 工具 {} 执行结果 ---\n{}\n", t, r))
-                    .collect::<Vec<_>>().join("");
-                conversation.push(crate::engine::inference::ChatMessage::user(&format!(
-                    "你刚才调用了工具，以下是执行结果。请基于这些结果继续回答用户：\n{}", combined
-                )));
-            }
+                // 当前轮 assistant + tool_results
+                let (conv2, pending) = new_conv.assistant(&round_text, &round_reasoning, &last_chunk_tool_calls);
+                if let Some(p) = pending {
+                    if was_native {
+                        conv2.tool_results(p, &tool_results).build()
+                    } else {
+                        let combined = tool_results.iter()
+                            .map(|(t, r)| format!("\n--- 工具 {} 执行结果 ---\n{}\n", t, r))
+                            .collect::<Vec<_>>().join("");
+                        conv2.tool_results_text(p, &combined).build()
+                    }
+                } else { conv2.build() }
+            };
 
             tool_round += 1;
         }

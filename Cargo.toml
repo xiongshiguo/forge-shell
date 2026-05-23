@@ -1,6 +1,6 @@
 [package]
 name = "forge-shell"
-version = "0.21.11"
+version = "0.21.12"
 edition = "2024"
 description = "熔炉 (ForgeShell) — 以意为炉，以语为锤，铸代码之剑"
 license = "AGPL-3.0"
@@ -25,7 +25,7 @@ serde_json = "1"
 # 日志
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"
+
 
 # 参数解析
 clap = { version = "4", features = ["derive"] }

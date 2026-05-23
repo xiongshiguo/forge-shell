@@ -35,15 +35,17 @@ struct Cli {
     key: Option<String>,
 }
 
-fn setup_logging(log_level: &str) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
+fn setup_logging(log_level: &str) -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    let file_appender = tracing_appender::rolling::daily(
-        config::forge_data_dir().join("logs"),
-        "forge.log",
-    );
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+    let log_dir = config::forge_data_dir().join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let log_path = log_dir.join(format!("forge-{}.log", today));
+
+    // 验证文件可创建
+    std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
 
     let fmt_layer = fmt::layer()
         .with_target(false)
@@ -53,7 +55,12 @@ fn setup_logging(log_level: &str) -> anyhow::Result<tracing_appender::non_blocki
     let file_layer = fmt::layer()
         .with_target(true)
         .with_ansi(false)
-        .with_writer(file_writer);
+        .with_writer(move || {
+            std::fs::OpenOptions::new()
+                .create(true).append(true)
+                .open(&log_path)
+                .expect("日志文件打开失败")
+        });
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -61,13 +68,13 @@ fn setup_logging(log_level: &str) -> anyhow::Result<tracing_appender::non_blocki
         .with(file_layer)
         .init();
 
-    Ok(guard)
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let _log_guard = setup_logging(&cli.log_level)?;
+    setup_logging(&cli.log_level)?;
 
     tracing::info!("🔥 熔炉 (ForgeShell) 启动中...");
 

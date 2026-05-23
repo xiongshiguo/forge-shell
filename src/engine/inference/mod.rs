@@ -297,6 +297,7 @@ pub struct ToolFunction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(default)]
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,8 +512,8 @@ mod tests {
     // === ChatMessage 序列化测试 ===
 
     #[test]
-    fn test_message_always_has_content_field() {
-        // Bug v0.16.5: tool_calls 消息的 content 不能缺失
+    fn test_assistant_tool_calls_content_is_null() {
+        // API 文档：assistant+tool_calls 的 content 为 null（不序列化）
         let msg = ChatMessage {
             role: "assistant".into(), content: String::new(),
             tool_calls: Some(vec![ToolCallDelta {
@@ -523,8 +524,17 @@ mod tests {
             tool_call_id: None, reasoning_content: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"content\""), "content must always be in JSON: {}", json);
+        assert!(!json.contains("\"content\":\"\""), "assistant+tool_calls content should be absent (null): {}", json);
         assert!(json.contains("tool_calls"), "tool_calls must be present: {}", json);
+    }
+
+    #[test]
+    fn test_tool_message_always_has_content() {
+        // API 文档：tool 消息的 content 必须存在
+        let msg = ChatMessage::tool_result("call_x", "result");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"content\""), "tool messages must have content");
+        assert!(json.contains("tool_call_id"));
     }
 
     #[test]

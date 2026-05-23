@@ -411,21 +411,24 @@ async fn build_project_context() -> String {
         }
     }
 
-    // Git 信息（5秒超时，失败静默跳过——不能因为 git 挂起就卡死整个对话）
-    if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(5),
-        tokio::process::Command::new("git")
-            .args(["branch", "--show-current"]).current_dir(&cwd).output()
-    ).await {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() { ctx.push_str(&format!("当前分支: {}\n", branch)); }
-    }
-    if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(5),
-        tokio::process::Command::new("git")
-            .args(["log", "--oneline", "-3"]).current_dir(&cwd).output()
-    ).await {
-        let commits = String::from_utf8_lossy(&output.stdout);
-        if !commits.trim().is_empty() {
-            ctx.push_str(&format!("最近提交:\n{}\n", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+    // Git 信息：先检查是否为 git 仓库，不是则静默跳过
+    let is_git_repo = cwd.join(".git").exists();
+    if is_git_repo {
+        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(3),
+            tokio::process::Command::new("git")
+                .args(["branch", "--show-current"]).current_dir(&cwd).output()
+        ).await {
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !branch.is_empty() { ctx.push_str(&format!("当前分支: {}\n", branch)); }
+        }
+        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(3),
+            tokio::process::Command::new("git")
+                .args(["log", "--oneline", "-3"]).current_dir(&cwd).output()
+        ).await {
+            let commits = String::from_utf8_lossy(&output.stdout);
+            if !commits.trim().is_empty() {
+                ctx.push_str(&format!("最近提交:\n{}\n", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+            }
         }
     }
 

@@ -382,6 +382,22 @@ fn build_error_context(state: &SharedState) -> String {
     ctx
 }
 
+/// 检查 git 是否安装（缓存结果，只检查一次）
+async fn git_available() -> bool {
+    use std::sync::atomic::{AtomicI8, Ordering};
+    static GIT_CHECK: AtomicI8 = AtomicI8::new(0); // 0=未检查 1=可用 -1=不可用
+    match GIT_CHECK.load(Ordering::Relaxed) {
+        1 => return true,
+        -1 => return false,
+        _ => {}
+    }
+    let ok = tokio::time::timeout(std::time::Duration::from_secs(1),
+        tokio::process::Command::new("git").arg("--version").output()
+    ).await.map(|r| r.is_ok()).unwrap_or(false);
+    GIT_CHECK.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
+    ok
+}
+
 async fn build_project_context() -> String {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut ctx = String::new();
@@ -411,23 +427,30 @@ async fn build_project_context() -> String {
         }
     }
 
-    // Git 信息：先检查是否为 git 仓库，不是则静默跳过
-    let is_git_repo = cwd.join(".git").exists();
-    if is_git_repo {
-        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(3),
+    // Git 信息：优雅降级——git 不可用或非仓库目录则静默跳过
+    if git_available().await {
+        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(2),
             tokio::process::Command::new("git")
-                .args(["branch", "--show-current"]).current_dir(&cwd).output()
+                .args(["rev-parse", "--is-inside-work-tree"]).current_dir(&cwd).output()
         ).await {
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !branch.is_empty() { ctx.push_str(&format!("当前分支: {}\n", branch)); }
-        }
-        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(3),
-            tokio::process::Command::new("git")
-                .args(["log", "--oneline", "-3"]).current_dir(&cwd).output()
-        ).await {
-            let commits = String::from_utf8_lossy(&output.stdout);
-            if !commits.trim().is_empty() {
-                ctx.push_str(&format!("最近提交:\n{}\n", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+            if String::from_utf8_lossy(&output.stdout).trim() == "true" {
+                // 确认在 git 仓库内，收集信息（每个命令独立超时）
+                if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(3),
+                    tokio::process::Command::new("git")
+                        .args(["branch", "--show-current"]).current_dir(&cwd).output()
+                ).await {
+                    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !branch.is_empty() { ctx.push_str(&format!("当前分支: {}\n", branch)); }
+                }
+                if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(2),
+                    tokio::process::Command::new("git")
+                        .args(["log", "--oneline", "-3"]).current_dir(&cwd).output()
+                ).await {
+                    let commits = String::from_utf8_lossy(&output.stdout);
+                    if !commits.trim().is_empty() {
+                        ctx.push_str(&format!("最近提交:\n{}\n", commits.lines().map(|l| format!("  {}", l)).collect::<Vec<_>>().join("\n")));
+                    }
+                }
             }
         }
     }

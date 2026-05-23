@@ -35,7 +35,7 @@ struct Cli {
     key: Option<String>,
 }
 
-fn setup_logging(log_level: &str) -> anyhow::Result<()> {
+fn setup_logging(log_level: &str) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level));
 
@@ -43,7 +43,7 @@ fn setup_logging(log_level: &str) -> anyhow::Result<()> {
         config::forge_data_dir().join("logs"),
         "forge.log",
     );
-    let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
 
     let fmt_layer = fmt::layer()
         .with_target(false)
@@ -61,13 +61,13 @@ fn setup_logging(log_level: &str) -> anyhow::Result<()> {
         .with(file_layer)
         .init();
 
-    Ok(())
+    Ok(guard)
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    setup_logging(&cli.log_level)?;
+    let _log_guard = setup_logging(&cli.log_level)?;
 
     tracing::info!("🔥 熔炉 (ForgeShell) 启动中...");
 

@@ -112,27 +112,62 @@ async fn main() -> anyhow::Result<()> {
 /// 检查并杀掉之前遗留的 forge-shell 进程
 async fn kill_old_instance() {
     let pid_path = config::forge_data_dir().join("forge.pid");
-    // 读取旧 PID
+    let mut killed = false;
+
+    // 方式 1：通过 PID 文件杀旧进程
     if let Ok(old_pid) = std::fs::read_to_string(&pid_path) {
         let old_pid = old_pid.trim();
-        if !old_pid.is_empty() {
+        if !old_pid.is_empty() && old_pid != std::process::id().to_string() {
             tracing::info!("发现旧进程 PID={}，尝试关闭", old_pid);
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", old_pid, "/F"])
-                    .output();
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = std::process::Command::new("kill").args([old_pid]).output();
-            }
-            // 等待旧进程释放端口
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            kill_pid(old_pid);
+            killed = true;
         }
     }
+
+    // 方式 2：无 PID 文件时，通过端口反查进程（解决首次安装问题）
+    if !killed {
+        if let Some(pid) = find_process_on_port(9527).await {
+            tracing::info!("端口 9527 被 PID={} 占用，尝试关闭", pid);
+            kill_pid(&pid);
+            killed = true;
+        }
+    }
+
+    if killed {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    }
+
     // 写入当前 PID
-    let current_pid = std::process::id().to_string();
-    let _ = std::fs::write(&pid_path, &current_pid);
-    tracing::info!("当前进程 PID={}", current_pid);
+    let _ = std::fs::write(&pid_path, std::process::id().to_string());
+}
+
+fn kill_pid(pid: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", pid, "/F"]).output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill").args([pid]).output();
+    }
+}
+
+#[cfg(windows)]
+async fn find_process_on_port(port: u16) -> Option<String> {
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", &format!("netstat -ano | findstr :{}", port)])
+        .output().await.ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // 提取最后一列的 PID
+    text.lines().next()?.split_whitespace().last().map(|s| s.to_string())
+}
+
+#[cfg(not(windows))]
+async fn find_process_on_port(port: u16) -> Option<String> {
+    let output = tokio::process::Command::new("lsof")
+        .args(["-t", &format!("-i:{}", port)])
+        .output().await.ok()?;
+    let pid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if pid.is_empty() { None } else { Some(pid) }
 }

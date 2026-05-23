@@ -1949,9 +1949,11 @@ pub async fn chat_handler(
             let tx0 = tx.clone();
             std::panic::AssertUnwindSafe(async move {
         let tx = tx0;
+        tracing::info!("[trace] 获取config锁");
         let config_guard = match tokio::time::timeout(std::time::Duration::from_secs(10), state_clone.config.lock()).await {
             Ok(g) => g,
             Err(_) => {
+                tracing::error!("[trace] 获取config锁超时");
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "error", "message": "服务繁忙（获取锁超时）"}).to_string()
                 )));
@@ -1960,6 +1962,7 @@ pub async fn chat_handler(
         };
         let mut config = config_guard.clone();
         drop(config_guard);
+        tracing::info!("[trace] config锁已释放");
 
         // 模型路由：模式 × 复杂度 动态选择模型
         let mode = req.mode.as_deref().unwrap_or("assist");
@@ -2230,7 +2233,10 @@ pub async fn chat_handler(
             let mut round_text = String::new();
             let mut round_reasoning = String::new();
             let mut last_chunk_tool_calls: Vec<crate::engine::inference::AccumulatedToolCall> = Vec::new();
-            let stream_result = client.chat_stream(conversation.clone()).await;
+            // L3：整个 API 调用+流读取强制超时（reqwest timeout 对流不生效）
+            let api_timeout = std::time::Duration::from_secs(if use_thinking { 300 } else { 120 });
+            let stream_result = tokio::time::timeout(api_timeout, client.chat_stream(conversation.clone())).await
+                .unwrap_or_else(|_| Err(crate::error::ForgeError::Api("请求超时".into())));
 
             match stream_result {
                 Ok(mut stream) => {

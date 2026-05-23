@@ -2000,8 +2000,14 @@ pub async fn chat_handler(
             crate::engine::router::Complexity::Complex => 393216,
         };
 
-        // 项目上下文（异步构建，超时自动跳过）
-        let project_info = String::new(); // FIXME: build_project_context 可能卡死，暂时跳过
+        // L3: 项目上下文，全局超时保证永不阻塞聊天流
+        let project_info = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            build_project_context(),
+        ).await.unwrap_or_else(|_| {
+            tracing::warn!("项目上下文构建超时，跳过");
+            String::new()
+        });
 
         // L3: 会话压缩——旧轮摘要，新轮完整
         let context = load_context();

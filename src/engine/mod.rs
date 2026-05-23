@@ -2,6 +2,8 @@ pub mod context;
 pub mod cache;
 pub mod conversation;
 pub mod inference;
+pub mod session;
+pub mod stream;
 pub mod tools;
 pub mod memory;
 pub mod router;

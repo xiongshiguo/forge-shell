@@ -2028,18 +2028,15 @@ pub async fn chat_handler(
             } else { String::new() }
         } else { String::new() };
 
-        // 每次对话开始就保存 latest.json（即使后续失败也有记录）
-        {
-            let dir = crate::config::forge_data_dir().join("sessions");
-            std::fs::create_dir_all(&dir).ok();
-            let starter = serde_json::json!({
-                "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
-                "turn": *state_clone.session_turn.lock().await + 1,
-                "messages": [{"role": "user", "content": &req.message}],
-            });
-            let _ = std::fs::write(dir.join("latest.json"),
-                serde_json::to_string_pretty(&starter).unwrap_or_default());
-        }
+        // L3: SessionManager 原子保存
+        let session_mgr = crate::engine::session::SessionManager::new(
+            crate::config::forge_data_dir().join("sessions")
+        );
+        session_mgr.save_latest(&crate::engine::session::SessionRecord {
+            date: chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+            turn: *state_clone.session_turn.lock().await + 1,
+            messages: vec![crate::engine::session::SessionMessage { role: "user".into(), content: req.message.clone() }],
+        });
 
         let user_msg = format!("{}{}{}{}", req.message, project_info, compressed, if !context.is_empty() { format!("\n跨会话: {}", context) } else { String::new() });
 
@@ -2228,53 +2225,42 @@ pub async fn chat_handler(
             match stream_result {
                 Ok(mut stream) => {
                     use futures::StreamExt;
-                    let mut stream_errors = 0u32;
+                    let mut acc = crate::engine::stream::StreamAccumulator::new();
                     while let Some(chunk_result) = stream.next().await {
-                        match chunk_result {
-                            Ok(chunk) => {
-                                stream_errors = 0; // 重置计数
-                                if !chunk.content.is_empty() {
-                                    has_content = true;
-                                    round_text.push_str(&chunk.content);
+                        match acc.ingest(chunk_result) {
+                            Ok(()) => {
+                                // 内容已累积到 acc，同步发送到前端
+                                let new_content = &acc.content[round_text.len()..];
+                                if !new_content.is_empty() {
+                                    round_text = acc.content.clone();
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "chunk", "content": chunk.content}).to_string()
+                                        serde_json::json!({"type": "chunk", "content": new_content}).to_string()
                                     )));
                                 }
-                                // 累积 reasoning_content 并显示在前端（思考链可见）
-                                if !chunk.reasoning_content.is_empty() {
-                                    round_reasoning.push_str(&chunk.reasoning_content);
+                                let new_reasoning = &acc.reasoning[round_reasoning.len()..];
+                                if !new_reasoning.is_empty() {
+                                    round_reasoning = acc.reasoning.clone();
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "reasoning", "content": chunk.reasoning_content}).to_string()
+                                        serde_json::json!({"type": "reasoning", "content": new_reasoning}).to_string()
                                     )));
                                 }
-                                // 累积原生 tool_calls
-                                if !chunk.tool_calls.is_empty() {
-                                    last_chunk_tool_calls = chunk.tool_calls;
+                                if !acc.tool_calls.is_empty() {
+                                    last_chunk_tool_calls = acc.tool_calls.clone();
                                 }
+                                if acc.is_done() { break; }
                             }
                             Err(e) => {
-                                stream_errors += 1;
-                                if stream_errors == 1 {
-                                    let err_msg = format!("流异常: {}", e);
-                                    state_clone.error_logger.log("stream", "error", &err_msg, &format!("round={}", tool_round));
-                                    let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "error", "message": err_msg}).to_string()
-                                    )));
-                                }
-                                // 已有有效内容则优美降级（保留已收到的内容）
-                                if !round_text.is_empty() || !last_chunk_tool_calls.is_empty() {
+                                state_clone.error_logger.log("stream", "error", &e.to_string(), &format!("round={}", tool_round));
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "error", "message": e.to_string()}).to_string()
+                                )));
+                                if acc.can_degrade() {
                                     let _ = tx.send(Ok(Event::default().data(
                                         serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应中断，基于已接收内容继续\n"}).to_string()
                                     )));
                                     break;
                                 }
-                                // 连续3次空响应则放弃
-                                if stream_errors >= 3 {
-                                    let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "error", "message": "响应流已中断（连续空响应）"}).to_string()
-                                    )));
-                                    break;
-                                }
+                                break;
                             }
                         }
                     }

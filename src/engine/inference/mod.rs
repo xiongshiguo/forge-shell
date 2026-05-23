@@ -123,7 +123,15 @@ impl InferenceClient {
         if !is_ollama {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
+        // 诊断日志：打印实际请求（仅首条消息摘要）
+        if let Some(first) = body.messages.first() {
+            tracing::info!("[API] model={} msgs={} tools={} thinking={} max_tok={} stream={} first_role={} first_len={}",
+                body.model, body.messages.len(), body.tools.as_ref().map(|t| t.len()).unwrap_or(0),
+                body.thinking.is_some(), body.max_tokens, body.stream,
+                first.role, first.content.len());
+        }
         let resp = req.json(&body).send().await?;
+        tracing::info!("[API] response status={}", resp.status());
 
         if !resp.status().is_success() {
             let status = resp.status();

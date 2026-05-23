@@ -2017,7 +2017,9 @@ pub async fn chat_handler(
 
         // L2: 项目上下文注入——利用 DeepSeek 1M 上下文能力
         let project_info = {
-            let new_fp = tokio::task::spawn_blocking(compute_fingerprint).await.unwrap_or_default();
+            let new_fp = tokio::time::timeout(std::time::Duration::from_secs(5),
+                tokio::task::spawn_blocking(compute_fingerprint))
+                .await.map(|r| r.unwrap_or_default()).unwrap_or_default();
             let mut old_fp = state_clone.project_fingerprint.lock().await;
             let always_ctx = tokio::time::timeout(std::time::Duration::from_secs(10), build_project_context())
                 .await.unwrap_or_else(|_| String::from("(项目上下文中断)"));
@@ -2025,7 +2027,9 @@ pub async fn chat_handler(
                 format!("\n\n## 当前项目环境\n{}", always_ctx)
             } else {
                 *old_fp = new_fp;
-                let scan = tokio::task::spawn_blocking(scan_project).await.unwrap_or_default();
+                let scan = tokio::time::timeout(std::time::Duration::from_secs(5),
+                    tokio::task::spawn_blocking(scan_project))
+                    .await.map(|r| r.unwrap_or_default()).unwrap_or_default();
                 format!("\n\n## 当前项目环境\n{}\n{}", always_ctx, scan)
             }
         };

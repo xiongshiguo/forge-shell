@@ -38,15 +38,22 @@
       <option value="local">本地</option>
     </select>
     <div class="topbar-right">
+      <span id="sessions-toggle" onclick="toggleSessions()" title="会话历史">📋</span>
       <span id="topbar-cost">¥0.0000</span>
       <span id="topbar-version" class="version-badge">v0.21.0</span>
       <span id="err-count-badge" class="err-count-badge ok" onclick="toggleErrorPanel()">✓</span>
     </div>
   </header>
 
-  <section id="chat">
-    <div id="messages"></div>
-  </section>
+  <div id="main-area">
+    <aside id="sessions-panel" style="display:none">
+      <div class="panel-hdr">📋 最近会话</div>
+      <div id="sessions-list">加载中…</div>
+    </aside>
+    <section id="chat">
+      <div id="messages"></div>
+    </section>
+  </div>
 
   <footer id="bottombar">
     <div class="input-wrapper">

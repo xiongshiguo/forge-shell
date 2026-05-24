@@ -913,7 +913,10 @@ pub async fn session_auto_save_handler(
 ) -> Json<serde_json::Value> {
     let turns = req["turns"].as_u64().unwrap_or(0);
     let preview = req["preview"].as_str().unwrap_or("");
-    // 保存元数据到会话列表
+    let messages: Vec<serde_json::Value> = req["messages"].as_array()
+        .map(|a| a.clone())
+        .unwrap_or_default();
+    // 保存完整会话（含消息）
     let dir = crate::config::forge_data_dir().join("sessions");
     std::fs::create_dir_all(&dir).ok();
     let session_id = chrono::Utc::now().format("%y%m%d-%H%M%S").to_string();
@@ -922,19 +925,13 @@ pub async fn session_auto_save_handler(
         "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
         "turns": turns,
         "preview": preview.chars().take(80).collect::<String>(),
+        "messages": messages,
         "auto_saved": true,
     });
-    let _ = std::fs::write(dir.join(format!("session_{}.json", session_id)),
-        serde_json::to_string_pretty(&session).unwrap_or_default());
-    // 同时更新 latest.json（启动恢复用）
-    let latest = serde_json::json!({
-        "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
-        "turn": turns,
-        "messages": [],
-        "auto_saved": true,
-    });
-    let _ = std::fs::write(dir.join("latest.json"),
-        serde_json::to_string_pretty(&latest).unwrap_or_default());
+    let session_json = serde_json::to_string_pretty(&session).unwrap_or_default();
+    let _ = std::fs::write(dir.join(format!("session_{}.json", session_id)), &session_json);
+    // 同时更新 latest.json（启动恢复用，含消息）
+    let _ = std::fs::write(dir.join("latest.json"), &session_json);
     // 异步记录进化数据
     {
         let mut evo = state.evolution.lock().await;

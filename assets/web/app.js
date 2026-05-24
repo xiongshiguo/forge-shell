@@ -233,6 +233,8 @@ function handleSSE(data, streamMsg, fullContent) {
 
     case 'done':
       finalizeStreamingMsg(streamMsg, fullContent);
+      autoSaveSession();
+      loadSessionsList();
       break;
   }
   return fullContent;
@@ -377,4 +379,68 @@ async function refreshErrorLogs() {
 async function clearErrorLogs() {
   await fetch('/api/logs/clear', {method:'POST'});
   refreshErrorLogs();
+}
+
+// === 自动保存会话 ===
+async function autoSaveSession() {
+  var msgs = [];
+  document.querySelectorAll('#messages .message').forEach(function(m) {
+    var role = 'system';
+    if (m.classList.contains('user')) role = 'user';
+    else if (m.classList.contains('assistant')) role = 'assistant';
+    var text = m.textContent || '';
+    if (text.length > 200) text = text.substring(0, 200) + '…';
+    msgs.push({role: role, content: text});
+  });
+  if (msgs.length === 0) return;
+  var turns = msgs.filter(function(m) { return m.role === 'user'; }).length;
+  var lastUser = msgs.filter(function(m) { return m.role === 'user'; }).pop();
+  var preview = lastUser ? lastUser.content : '';
+  try {
+    await fetch('/api/session/auto-save', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({turns:turns, preview:preview, messages:msgs})
+    });
+  } catch(e) {}
+}
+
+// === 会话侧栏 ===
+var sessionsCache = [];
+
+function toggleSessions() {
+  var el = document.getElementById('sessions-panel');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if (el.style.display === 'block') loadSessionsList();
+}
+
+async function loadSessionsList() {
+  try {
+    var r = await fetch('/api/sessions'); var d = await r.json();
+    var el = document.getElementById('sessions-list');
+    if (d.ok && d.sessions && d.sessions.length) {
+      sessionsCache = d.sessions;
+      el.innerHTML = d.sessions.slice(0, 10).map(function(s) {
+        var preview = (s.preview || '').substring(0, 40);
+        return '<div class="session-item" onclick="restoreSession(\'' + s.id + '\')">' +
+          '<div class="session-item-preview">' + escapeHtml(preview || '(空)') + '</div>' +
+          '<div class="session-item-date">' + (s.date||'') + ' · ' + (s.turns||0) + '轮</div>' +
+          '</div>';
+      }).join('');
+    } else {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:12px">暂无历史</div>';
+    }
+  } catch(e) {}
+}
+
+function restoreSession(id) {
+  var found = sessionsCache.find(function(s) { return s.id === id; });
+  if (!found || !found.messages || !found.messages.length) return;
+  document.getElementById('messages').innerHTML = '';
+  toolMsgIndex = {};
+  found.messages.forEach(function(m) {
+    if (m.role && m.content) addMsg(m.role, m.content);
+  });
+  addMsg('system', '已恢复会话 (' + (found.date||'') + '，' + found.messages.length + ' 条消息)');
+  document.getElementById('sessions-panel').style.display = 'none';
 }

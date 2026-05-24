@@ -64,11 +64,7 @@ impl Conversation {
             })
         };
 
-        // thinking 关闭时清除无工具调用的 reasoning
-        // ⚠️ 有 tool_calls 的消息必须保留原始 reasoning_content
-        if !self.thinking_enabled && pending.is_none() {
-            msg.reasoning_content = String::new();
-        }
+        // L4: reasoning_content 永不主动清除——保留原始值最安全
 
         self.last_assistant_idx = Some(self.messages.len());
         self.messages.push(msg);

@@ -360,19 +360,11 @@ impl ChatMessage {
 /// 消息格式校验+自动修复。在每次 API 调用前运行，防止：
 /// 1. tool_calls 后缺 tool 消息 → 补齐空结果
 /// 2. content 字段缺失 → 补空字符串
-/// 3. thinking 关闭但有 reasoning_content → 清除
-/// 4. tool_call_id 为空 → 生成占位 ID
-fn validate_messages(mut msgs: Vec<ChatMessage>, thinking_enabled: bool) -> Vec<ChatMessage> {
-    // 修复 3: thinking 关闭时清除无工具调用的 reasoning_content
-    // ⚠️ 有 tool_calls 的 assistant 消息必须保留原始 reasoning_content —— DeepSeek API 要求
-    if !thinking_enabled {
-        for m in &mut msgs {
-            let has_tool_calls = m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
-            if m.role == "assistant" && !has_tool_calls {
-                m.reasoning_content = String::new();
-            }
-        }
-    }
+/// 3. tool_call_id 为空 → 生成占位 ID
+fn validate_messages(mut msgs: Vec<ChatMessage>, _thinking_enabled: bool) -> Vec<ChatMessage> {
+    // L4: reasoning_content 永不主动清除——保留 DeepSeek 返回的原始值
+    // DeepSeek API 要求有 tool_calls 时必须回传；无 tool_calls 时空串无害
+    // 由 API 自身决定是否忽略，我们不替它判断
 
     // 修复 4: tool 消息的 tool_call_id 为空时补充
     for m in &mut msgs {

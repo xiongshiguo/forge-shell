@@ -181,15 +181,26 @@ function createStreamingMsg() {
   var div = document.createElement('div');
   div.className = 'message assistant streaming';
   div.id = 'streaming-msg';
-  div.innerHTML = '<div class="msg-content"></div>';
+  // thinking 区块（默认折叠）+ 主内容区
+  div.innerHTML = '<details class="thinking-block" open><summary>思考中…</summary><div class="thinking-content"></div></details><div class="msg-content"></div>';
   document.getElementById('messages').appendChild(div);
   scrollDown();
   return div;
 }
 
-function finalizeStreamingMsg(streamMsg, content) {
+function finalizeStreamingMsg(streamMsg, content, hasThinking) {
   streamMsg.classList.remove('streaming');
   streamMsg.removeAttribute('id');
+  if (hasThinking) {
+    var det = streamMsg.querySelector('.thinking-block');
+    if (det) {
+      det.querySelector('summary').textContent = '已深度思考';
+      det.open = false; // 完成后折叠
+    }
+  } else {
+    var det = streamMsg.querySelector('.thinking-block');
+    if (det) det.remove(); // 无思考则移除区块
+  }
   if (content) {
     streamMsg.querySelector('.msg-content').innerHTML = renderMarkdown(content);
   } else if (!streamMsg.querySelector('.msg-content').textContent.trim()) {
@@ -199,22 +210,29 @@ function finalizeStreamingMsg(streamMsg, content) {
 }
 
 function handleSSE(data, streamMsg, fullContent) {
+  var thinkingEl = streamMsg.querySelector('.thinking-content');
   var contentEl = streamMsg.querySelector('.msg-content');
-  var currentText = contentEl.textContent;
 
   switch (data.type) {
+    case 'thinking':
+      // 思考过程：流入可折叠区块
+      if (thinkingEl) {
+        thinkingEl.textContent += data.content;
+        var det = streamMsg.querySelector('.thinking-block');
+        if (det) det.querySelector('summary').textContent = '思考中… (' + thinkingEl.textContent.length + ' 字)';
+      }
+      scrollDown();
+      break;
+
     case 'chunk':
-      // reasoning 已在后端与 content 合并，直接流式渲染
+      // 正式回答：流入主内容区
       fullContent += data.content;
-      // 增量渲染：每收到新内容就更新 markdown
       contentEl.innerHTML = renderMarkdown(fullContent);
       scrollDown();
       break;
 
     case 'tool_start':
-      // 内联工具调用：在消息流中插入一行提示
       (data.tools || []).forEach(function(t) {
-        var icons = {web:'',search:'',read:'',exec:'',lsp:'','auto-fix':'',edit:'',snap:'',rollback:'',save:''};
         var names = {web:'联网搜索',search:'代码搜索',read:'读取文件',exec:'执行命令',lsp:'LSP检查','auto-fix':'自动修复',edit:'编辑文件',snap:'快照',rollback:'回滚',save:'记忆保存'};
         var shortArg = (t.arg || '').length > 40 ? (t.arg || '').substring(0, 40) + '…' : (t.arg || '');
         addToolMsg(t.tool, names[t.tool] || t.tool, shortArg, 'running');
@@ -222,7 +240,6 @@ function handleSSE(data, streamMsg, fullContent) {
       break;
 
     case 'tool_result':
-      // 更新工具状态
       updateToolStatus(data.tool, data.arg, data.success);
       break;
 
@@ -232,7 +249,8 @@ function handleSSE(data, streamMsg, fullContent) {
       break;
 
     case 'done':
-      finalizeStreamingMsg(streamMsg, fullContent);
+      var hasThinking = thinkingEl && thinkingEl.textContent.trim().length > 0;
+      finalizeStreamingMsg(streamMsg, fullContent, hasThinking);
       autoSaveSession();
       loadSessionsList();
       break;

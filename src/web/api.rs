@@ -2328,15 +2328,19 @@ pub async fn chat_handler(
                             Ok(()) => {
                                 let new_content = &acc.content[round_text.len()..];
                                 let new_reasoning = &acc.reasoning[round_reasoning.len()..];
-                                // DeepSeek V4 Pro 把输出放在 reasoning_content，content 常为 null
-                                // 合并两者确保前端始终能渲染
-                                let combined = format!("{}{}", new_reasoning, new_content);
-                                if !combined.is_empty() {
-                                    last_content = tokio::time::Instant::now(); // 有实际内容，重置无内容超时
-                                    if !new_content.is_empty() { round_text = acc.content.clone(); }
-                                    if !new_reasoning.is_empty() { round_reasoning = acc.reasoning.clone(); }
+                                // 思考和回答分离为两个独立 SSE 事件（Claude Code 风格）
+                                if !new_reasoning.is_empty() {
+                                    round_reasoning = acc.reasoning.clone();
+                                    last_content = tokio::time::Instant::now();
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "chunk", "content": combined}).to_string()
+                                        serde_json::json!({"type": "thinking", "content": new_reasoning}).to_string()
+                                    )));
+                                }
+                                if !new_content.is_empty() {
+                                    round_text = acc.content.clone();
+                                    last_content = tokio::time::Instant::now();
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "chunk", "content": new_content}).to_string()
                                     )));
                                 }
                                 if !acc.tool_calls.is_empty() {

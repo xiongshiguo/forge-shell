@@ -138,6 +138,25 @@ body {
 .message.error { color:var(--red); font-size:13px; }
 .message.streaming { opacity:0.92; }
 
+/* === 思考区块（Claude Code 风格可折叠） === */
+.thinking-block {
+  margin-bottom:10px; padding:8px 12px;
+  background:rgba(201,169,110,0.06); border:1px solid rgba(201,169,110,0.15);
+  border-radius:8px; font-size:12px; color:var(--text-dim);
+}
+.thinking-block summary {
+  cursor:pointer; color:var(--gold); font-weight:500; font-size:12px;
+  user-select:none; -webkit-user-select:none;
+  padding:2px 0; outline:none;
+}
+.thinking-block summary:hover { color:var(--pri); }
+.thinking-content {
+  margin-top:6px; white-space:pre-wrap; word-break:break-word;
+  max-height:200px; overflow-y:auto; font-size:11px; line-height:1.5;
+  color:var(--text-dim); border-top:1px solid rgba(201,169,110,0.08);
+  padding-top:6px;
+}
+
 /* === Markdown === */
 .code-block {
   background:rgba(0,0,0,0.4); border:1px solid var(--purple-glow);

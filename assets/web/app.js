@@ -46,7 +46,25 @@ function showMainUI() {
   checkUpdate();
   setInterval(refreshStats, 10000);
   setInterval(refreshErrorBadge, 30000);
-  addMsg('system', '熔炉已就绪');
+  loadLatestSession().then(function(loaded) {
+    if (!loaded) addMsg('system', '熔炉已就绪');
+  });
+}
+
+async function loadLatestSession() {
+  try {
+    var r = await fetch('/api/session/latest');
+    var d = await r.json();
+    if (d.ok && d.session && d.session.messages && d.session.messages.length) {
+      var msgs = d.session.messages;
+      for (var i = 0; i < msgs.length; i++) {
+        addMsg(msgs[i].role, msgs[i].content);
+      }
+      addMsg('system', '已恢复上次会话 (' + (d.session.date || '') + '，' + msgs.length + ' 条消息)');
+      return true;
+    }
+  } catch(e) {}
+  return false;
 }
 
 async function syncVersion() {

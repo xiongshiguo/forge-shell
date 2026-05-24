@@ -2212,9 +2212,8 @@ pub async fn chat_handler(
         } else {
             build_tool_defs()
         };
-        // 思考模式：仅 Complex 任务启用（Moderate 也走思考会显著增加首响延迟）
-        // thinking 一旦启用全程保持（reasoning_content 消息不能被无thinking请求处理）
-        let use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
+        // 思考模式：仅 Complex 任务启用（Pro 超时降级 Flash 时自动关闭）
+        let mut use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);
         loop {
             let mut client = match crate::engine::inference::InferenceClient::new(&config)
                 .map(|c| c.with_max_tokens(max_out_tokens).with_thinking(use_thinking).with_tools(tool_defs.clone())) {
@@ -2340,6 +2339,20 @@ pub async fn chat_handler(
                 }
             }
             // stream 已 drop，client 不再被借用
+
+            // L3: Pro 超时自动降级 Flash——保证 Complex 任务不卡死
+            let pro_got_nothing = round_text.is_empty() && last_chunk_tool_calls.is_empty();
+            let is_pro = config.ai.default_model.contains("pro");
+            let already_fallback = config.ai.default_model.contains("flash") && !use_thinking;
+            if pro_got_nothing && is_pro && !already_fallback && tool_round == 0 {
+                tracing::warn!("[chat] Pro无响应，降级Flash重试");
+                config.ai.default_model = config.ai.flash_model.clone();
+                use_thinking = false;
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "chunk", "content": "\n⚡ Pro 响应超时，自动切换 Flash 重试…\n"}).to_string()
+                )));
+                continue;
+            }
 
             // 解析工具调用：优先原生 tool_calls，文本 [TOOL:xxx] 兜底
             let was_native = !last_chunk_tool_calls.is_empty();

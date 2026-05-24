@@ -363,10 +363,14 @@ impl ChatMessage {
 /// 3. thinking 关闭但有 reasoning_content → 清除
 /// 4. tool_call_id 为空 → 生成占位 ID
 fn validate_messages(mut msgs: Vec<ChatMessage>, thinking_enabled: bool) -> Vec<ChatMessage> {
-    // 修复 3: thinking 关闭时将 reasoning_content 设为空串（保留字段，避免400错误）
+    // 修复 3: thinking 关闭时清除无工具调用的 reasoning_content
+    // ⚠️ 有 tool_calls 的 assistant 消息必须保留原始 reasoning_content —— DeepSeek API 要求
     if !thinking_enabled {
         for m in &mut msgs {
-            if m.role == "assistant" { m.reasoning_content = String::new(); }
+            let has_tool_calls = m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
+            if m.role == "assistant" && !has_tool_calls {
+                m.reasoning_content = String::new();
+            }
         }
     }
 

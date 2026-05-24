@@ -2394,8 +2394,9 @@ pub async fn chat_handler(
                             Ok(()) => {
                                 let new_content = &acc.content[round_text.len()..];
                                 let new_reasoning = &acc.reasoning[round_reasoning.len()..];
-                                // 思考和回答分离为两个独立 SSE 事件（Claude Code 风格）
-                                if !new_reasoning.is_empty() {
+                                // 思考/回答分离仅对 Pro+thinking 生效
+                                // Flash（thinking=false）的输出也在 reasoning_content，必须作为 chunk 推送
+                                if use_thinking && !new_reasoning.is_empty() {
                                     round_reasoning = acc.reasoning.clone();
                                     last_content = tokio::time::Instant::now();
                                     let _ = tx.send(Ok(Event::default().data(
@@ -2407,6 +2408,14 @@ pub async fn chat_handler(
                                     last_content = tokio::time::Instant::now();
                                     let _ = tx.send(Ok(Event::default().data(
                                         serde_json::json!({"type": "chunk", "content": new_content}).to_string()
+                                    )));
+                                }
+                                // 非 thinking 模式下，reasoning_content 就是实际输出 → 作为 chunk 推送
+                                if !use_thinking && !new_reasoning.is_empty() {
+                                    round_reasoning = acc.reasoning.clone();
+                                    last_content = tokio::time::Instant::now();
+                                    let _ = tx.send(Ok(Event::default().data(
+                                        serde_json::json!({"type": "chunk", "content": new_reasoning}).to_string()
                                     )));
                                 }
                                 if !acc.tool_calls.is_empty() {

@@ -11,119 +11,44 @@
 <!-- 首次配置 -->
 <div id="setup-page">
   <div class="setup-card">
-    <div class="setup-logo">🔥</div>
+    <div class="setup-logo">&#x1F525;</div>
     <h1>欢迎使用熔炉</h1>
     <p class="setup-subtitle">以意为炉，以语为锤，铸代码之剑</p>
     <p class="setup-desc">请输入你的 DeepSeek API Key 开始使用</p>
     <input id="setup-key" type="password" placeholder="sk-xxxxxxxxxxxxxxxx" autofocus>
-    <p class="setup-hint">Key 以 sk- 开头 · 去 <a href="https://platform.deepseek.com" target="_blank">DeepSeek 开放平台</a> 获取</p>
+    <p class="setup-hint">Key 以 sk- 开头 &middot; 去 <a href="https://platform.deepseek.com" target="_blank">DeepSeek 开放平台</a> 获取</p>
     <button id="setup-btn">保存并开始使用</button>
     <p id="setup-msg"></p>
   </div>
 </div>
 
-<!-- 主界面 -->
+<!-- 主界面：单列对话流 -->
 <div id="app" style="display:none">
-
-  <!-- 更新条 -->
-  <div id="update-banner" style="display:none">
-    <span id="update-text"></span>
-    <button id="update-btn">立即更新</button>
-  </div>
-
-  <!-- 顶部栏 -->
   <header id="topbar">
-    <div class="topbar-left">
-      <span class="logo">🔥 熔炉</span>
-    </div>
+    <span class="logo">&#x1F525; 熔炉</span>
     <div class="mode-selector">
-      <button class="mode-btn" data-mode="plan" title="只分析不修改">规划</button>
-      <button class="mode-btn active" data-mode="assist" title="逐步执行说明">助手</button>
-      <button class="mode-btn" data-mode="speed" title="自动完成汇总">极速</button>
+      <button class="mode-btn" data-mode="plan">规划</button>
+      <button class="mode-btn active" data-mode="assist">助手</button>
+      <button class="mode-btn" data-mode="speed">极速</button>
     </div>
-    <select id="model-select" class="model-select" onchange="setModelPref(this.value)" title="模型偏好">
-      <option value="auto" selected>🧠 智能</option>
-      <option value="pro">💎 Pro</option>
-      <option value="flash">⚡ Flash</option>
-      <option value="local">🏠 本地</option>
+    <select id="model-select" onchange="setModelPref(this.value)">
+      <option value="auto" selected>智能</option>
+      <option value="pro">Pro</option>
+      <option value="flash">Flash</option>
+      <option value="local">本地</option>
     </select>
     <div class="topbar-right">
-      <a href="https://forgeshell.cn" target="_blank" class="nav-link" title="社区官网">🌐 社区</a>
-      <a href="https://forgeshell.cn/docs" target="_blank" class="nav-link" title="文档">📖 文档</a>
-      <span id="topbar-cost">💰 ¥0.0000</span>
-      <span id="topbar-hit">94%</span>
-      <span id="topbar-version" class="version-badge">v0.14.1</span>
-      <span id="err-indicator" class="err-indicator" onclick="toggleErrorPanel()" title="错误日志" style="color:var(--green)">✓ <span id="err-count">0</span></span>
-      <button id="session-end-btn">结束</button>
+      <span id="topbar-cost">¥0.0000</span>
+      <span id="topbar-version" class="version-badge">v0.21.0</span>
+      <span id="err-count-badge" class="err-count-badge ok" onclick="toggleErrorPanel()">✓</span>
     </div>
   </header>
 
-  <!-- 主体三栏 -->
-  <div id="main">
-    <!-- 左：文件树 -->
-    <aside id="left-panel">
-      <div class="panel-header" id="file-tree-header">📁 项目文件 <span style="font-size:10px;color:var(--text-dim)">(<span id="proj-dir">.</span>)</span></div>
-      <div id="file-tree">加载中…</div>
-    </aside>
+  <section id="chat">
+    <div id="messages"></div>
+  </section>
 
-    <!-- 中：对话区 -->
-    <section id="chat">
-      <div id="messages"></div>
-      <div id="streaming-area" style="display:none">
-        <div id="streaming-content"></div>
-      </div>
-    </section>
-
-    <!-- 右：会话信息 -->
-    <aside id="right-panel">
-      <div class="panel-section">
-        <div class="panel-header">📊 本次会话</div>
-        <div id="session-stats">
-          <div class="stat-row"><span class="stat-label">轮次</span><span class="stat-val" id="stat-turns">0</span></div>
-          <div class="stat-row"><span class="stat-label">Token</span><span class="stat-val" id="stat-tokens">0</span></div>
-          <div class="stat-row"><span class="stat-label">缓存命中</span><span class="stat-val" id="stat-cache">-</span></div>
-          <div class="stat-row"><span class="stat-label">模型</span><span class="stat-val" id="stat-model">-</span></div>
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="panel-header">📜 最近提交</div>
-        <div id="recent-commits" style="font-size:11px;color:var(--text-dim)">
-          加载中…
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="panel-header">💰 费用</div>
-        <div id="cost-mini">
-          <div style="font-size:20px;color:var(--gold)" id="cost-val">¥0.0000</div>
-          <div style="font-size:11px;color:var(--text-dim)">缓存 <span id="hit-val" style="color:var(--green)">94%</span></div>
-          <div style="font-size:11px;color:var(--text-dim)">vs Claude <span id="savings-val" style="color:var(--green)">96%</span></div>
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="panel-header">🧠 进化</div>
-        <div id="evo-mini" style="font-size:11px;color:var(--text-dim)">
-          经验: - | SOP: - | 成功率: -
-        </div>
-      </div>
-
-      <div class="panel-section">
-        <div class="panel-header">📋 最近会话</div>
-        <div id="recent-sessions" style="font-size:11px;color:var(--text-dim)">
-          暂无历史
-        </div>
-      </div>
-    </aside>
-  </div>
-
-  <!-- 底部输入栏 -->
   <footer id="bottombar">
-    <div id="status-line">
-      <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>
-      <span id="thinking-status">就绪</span>
-    </div>
     <div class="input-wrapper">
       <input id="user-input" type="text" placeholder="输入指令… (Enter 发送)" autofocus>
       <button id="send-btn">发送</button>
@@ -131,33 +56,18 @@
   </footer>
 </div>
 
-<!-- 复盘弹窗 -->
-<div id="review-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:center">
-  <div style="background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:32px;max-width:500px;width:90%">
-    <h3 style="color:var(--gold);margin-bottom:16px">🔍 复盘本次对话</h3>
-    <p style="color:var(--text-dim);margin-bottom:12px;font-size:14px">将匿名策略数据提交到经验熔池，帮助熔炉进化。</p>
-    <div id="review-preview" style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:16px;max-height:200px;overflow-y:auto;font-size:12px;color:var(--text-dim)"></div>
-    <p style="color:var(--red);font-size:11px;margin-bottom:16px">✓ 不上传代码、文件路径、API Key、变量名</p>
-    <div style="display:flex;gap:8px">
-      <button id="review-submit-btn" style="flex:1;padding:10px;background:var(--purple);color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px">提交复盘</button>
-      <button id="review-skip-btn" style="flex:1;padding:10px;background:var(--bg3);color:var(--text);border:none;border-radius:8px;cursor:pointer;font-size:14px">跳过</button>
-    </div>
-    <p id="review-msg" style="margin-top:12px;font-size:13px;text-align:center"></p>
-  </div>
-</div>
-
-<!-- 错误日志面板 -->
-<div id="error-panel" style="display:none;position:fixed;top:0;right:0;width:380px;height:100%;background:var(--bg2);border-left:1px solid var(--bg3);z-index:900;overflow-y:auto;padding:20px;box-shadow:-4px 0 16px rgba(0,0,0,0.3)">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h3 style="color:var(--gold);margin:0">🔍 错误日志</h3>
+<!-- 错误日志面板（按需弹出） -->
+<div id="error-panel" style="display:none">
+  <div class="ep-header">
+    <h3>错误日志</h3>
     <div>
-      <button onclick="refreshErrorLogs()" style="background:var(--bg3);color:var(--text);border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;margin-right:4px">🔄 刷新</button>
-      <button onclick="clearErrorLogs()" style="background:var(--bg3);color:var(--text);border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;margin-right:4px">🗑 清空</button>
-      <button onclick="document.getElementById('error-panel').style.display='none'" style="background:var(--bg3);color:var(--text);border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px">✕</button>
+      <button onclick="refreshErrorLogs()">刷新</button>
+      <button onclick="clearErrorLogs()">清空</button>
+      <button onclick="document.getElementById('error-panel').style.display='none'">✕</button>
     </div>
   </div>
-  <div id="diagnosis-box" style="background:rgba(201,169,110,0.08);border:1px solid var(--gold-glow);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--gold)"></div>
-  <div id="error-log-list" style="font-size:11px;color:var(--text-dim)">加载中…</div>
+  <div id="diagnosis-box"></div>
+  <div id="error-log-list">加载中…</div>
 </div>
 
 <script src="app.js"></script>

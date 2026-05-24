@@ -198,12 +198,17 @@ async fn check_latest_version() -> Result<Option<String>, reqwest::Error> {
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
     let resp = client
-        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/releases/latest")
+        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/tags?per_page=5")
         .header("User-Agent", "ForgeShell-UpdateCheck")
         .send()
         .await?;
     let json: serde_json::Value = resp.json().await?;
-    Ok(json["tag_name"].as_str().map(|s| s.trim_start_matches('v').to_string()))
+    // 取最新 tag（列表已按时间降序）
+    let tag = json.as_array()
+        .and_then(|a| a.first())
+        .and_then(|t| t["name"].as_str())
+        .map(|s| s.trim_start_matches('v').to_string());
+    Ok(tag)
 }
 
 /// 进化状态

@@ -633,6 +633,49 @@ fn build_pro_tools() -> Vec<crate::engine::inference::ToolDef> {
     ]
 }
 
+/// L4: 根据用户意图关键词筛选工具，减少 DeepSeek 工具解析负担
+fn filter_tools_by_intent(msg: &str, tools: Vec<crate::engine::inference::ToolDef>) -> Vec<crate::engine::inference::ToolDef> {
+    let msg_lower = msg.to_lowercase();
+    let always_keep = ["read", "write"]; // 永远保留的核心工具
+    let mut keep: Vec<&str> = always_keep.iter().copied().collect();
+
+    // 代码生成 → write + exec + lsp
+    if msg_lower.contains("写") || msg_lower.contains("生成") || msg_lower.contains("创建")
+    || msg_lower.contains("write") || msg_lower.contains("create") || msg_lower.contains("html")
+    || msg_lower.contains("代码") || msg_lower.contains("code") {
+        keep.extend(["edit", "exec", "lsp", "web-fetch"]);
+    }
+    // 搜索/查找 → search + glob + web
+    if msg_lower.contains("搜索") || msg_lower.contains("找") || msg_lower.contains("查")
+    || msg_lower.contains("search") || msg_lower.contains("find") || msg_lower.contains("grep") {
+        keep.extend(["search", "glob", "web", "semantic"]);
+    }
+    // 编译/测试 → exec + lsp
+    if msg_lower.contains("编译") || msg_lower.contains("build") || msg_lower.contains("测试")
+    || msg_lower.contains("test") || msg_lower.contains("运行") || msg_lower.contains("run")
+    || msg_lower.contains("cargo") || msg_lower.contains("错误") || msg_lower.contains("error") {
+        keep.extend(["exec", "lsp"]);
+    }
+    // 联网 → web + web-fetch
+    if msg_lower.contains("联网") || msg_lower.contains("搜索最新") || msg_lower.contains("文档")
+    || msg_lower.contains("docs") || msg_lower.contains("api") || msg_lower.contains("最新") {
+        keep.extend(["web", "web-fetch"]);
+    }
+    // 多步骤/复杂 → todo + ask
+    if msg_lower.contains("项目") || msg_lower.contains("project") || msg_lower.contains("系统")
+    || msg_lower.contains("架构") || msg_lower.contains("设计") {
+        keep.extend(["todo", "glob", "web-fetch"]);
+    }
+
+    // 过滤：保留常用 + 意图命中的工具
+    let common = ["search", "glob", "exec", "web", "lsp"];
+    for &c in &common { if !keep.contains(&c) { keep.push(c); } }
+    // 限制 10 个以内（比全量 16 少 40%）
+    keep.truncate(10);
+
+    tools.into_iter().filter(|t| keep.contains(&t.function.name.as_str())).collect()
+}
+
 fn load_context() -> String {
     let path = context_file_path();
     if path.exists() {
@@ -2311,9 +2354,10 @@ pub async fn chat_handler(
         let tool_defs = if mode == "plan" {
             build_readonly_tools()
         } else if is_pro {
-            build_pro_tools() // Pro用6核心工具，减少思考负担
+            build_pro_tools() // Pro用10核心工具
         } else {
-            build_tool_defs() // Flash用全13工具
+            // Flash: 根据意图关键词筛选工具（16→≤10），减少DeepSeek解析负担
+            filter_tools_by_intent(&req.message, build_tool_defs())
         };
         // 思考模式：仅 Complex 任务启用（Pro 超时降级 Flash 时自动关闭）
         let mut use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);

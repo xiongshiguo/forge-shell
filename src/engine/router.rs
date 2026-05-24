@@ -76,8 +76,8 @@ impl ModelRouter {
         let estimated_tokens = self.estimate_tokens(intent, complexity);
 
         let (in_price, out_price) = match complexity {
-            Complexity::Simple => (self.flash_input_price, self.flash_output_price),
-            _ => (self.pro_input_price, self.pro_output_price),
+            Complexity::Simple | Complexity::Moderate => (self.flash_input_price, self.flash_output_price),
+            Complexity::Complex => (self.pro_input_price, self.pro_output_price),
         };
         let estimated_cost = (estimated_tokens as f64 / 1_000_000.0) * (in_price + out_price) / 2.0;
 
@@ -88,8 +88,9 @@ impl ModelRouter {
                 self.flash_model
             ),
             Complexity::Moderate => format!(
-                "中等复杂任务，使用 {} 以保证精度",
-                self.pro_model
+                "中等任务 ({} 字符)，使用 {} 以兼顾速度",
+                intent.chars().count(),
+                self.flash_model
             ),
             Complexity::Complex => format!(
                 "复杂任务 (包含关键指令)，使用 {} 并启用扩展思考",
@@ -109,8 +110,10 @@ impl ModelRouter {
     /// 根据复杂度选择模型
     pub fn route(&self, complexity: Complexity) -> &str {
         match complexity {
-            Complexity::Simple => &self.flash_model,
-            Complexity::Moderate | Complexity::Complex => &self.pro_model,
+            // L4: DeepSeek V4 Pro + 长system prompt + 多工具 => 不发数据
+            // Flash 每次正常，故 Simple/Moderate 都用 Flash
+            Complexity::Simple | Complexity::Moderate => &self.flash_model,
+            Complexity::Complex => &self.pro_model, // 仅真正复杂任务用 Pro+思考
         }
     }
 

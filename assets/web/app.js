@@ -408,11 +408,15 @@ async function autoSaveSession() {
 // === 会话侧栏 ===
 var sessionsCache = [];
 
-function newSession() {
+async function newSession() {
+  // 先保存当前会话
+  await autoSaveSession();
+  // 再清空并开始新会话
   document.getElementById('messages').innerHTML = '';
   toolMsgIndex = {};
-  addMsg('system', '新会话已开始');
-  document.getElementById('sessions-panel').style.display = 'none';
+  addMsg('system', '新会话已开始（上一会话已自动保存）');
+  // 刷新会话列表
+  loadSessionsList();
 }
 
 function toggleSessions() {

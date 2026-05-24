@@ -520,7 +520,7 @@ fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
         }},
         ToolDef { tool_type: "function".into(), function: ToolFunction {
             name: "exec".into(),
-            description: "执行白名单命令(cargo/git等)，30秒超时".into(),
+            description: "执行命令(白名单: cargo check/build/test/fmt/clippy/doc/new/init/update/tree/metadata, git status/diff/log/branch/add/commit/stash/checkout/switch/restore/rebase/clone, ls/dir/echo/type/rg/mkdir/md/rustc/rustup)".into(),
             parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string","description":"shell 命令"}},"required":["command"]}),
         }},
         ToolDef { tool_type: "function".into(), function: ToolFunction {
@@ -1867,11 +1867,16 @@ pub async fn exec_handler(
     let cmd = req["command"].as_str().unwrap_or("");
     let cwd = req["cwd"].as_str().unwrap_or(".");
 
-    // 白名单检查
-    let allowed = ["cargo check", "cargo test", "cargo build", "cargo fmt", "cargo clippy",
-                   "git status", "git diff", "git log", "git branch", "rustc --version", "cargo --version"];
+    // L3: 统一白名单（与 sandbox::GENERAL_COMMANDS 同步）
+    const ALLOWED: &[&str] = &[
+        "cargo check", "cargo test", "cargo build", "cargo fmt", "cargo clippy", "cargo doc",
+        "cargo update", "cargo tree", "cargo metadata", "cargo --version", "cargo new", "cargo init",
+        "git status", "git diff", "git log", "git branch", "git add", "git commit", "git stash",
+        "git checkout", "git switch", "git restore", "git rebase", "git clone",
+        "rustc --version", "rustup", "ls", "dir", "echo", "type", "rg", "mkdir", "md",
+    ];
     let cmd_trimmed = cmd.trim();
-    let is_allowed = allowed.iter().any(|a| cmd_trimmed.starts_with(a));
+    let is_allowed = ALLOWED.iter().any(|a| cmd_trimmed.starts_with(a));
 
     if !is_allowed {
         return Json(serde_json::json!({

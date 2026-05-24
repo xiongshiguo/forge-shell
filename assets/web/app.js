@@ -408,6 +408,13 @@ async function autoSaveSession() {
 // === 会话侧栏 ===
 var sessionsCache = [];
 
+function newSession() {
+  document.getElementById('messages').innerHTML = '';
+  toolMsgIndex = {};
+  addMsg('system', '新会话已开始');
+  document.getElementById('sessions-panel').style.display = 'none';
+}
+
 function toggleSessions() {
   var el = document.getElementById('sessions-panel');
   el.style.display = el.style.display === 'none' ? 'block' : 'none';

@@ -2230,9 +2230,10 @@ pub async fn chat_handler(
             let mut round_text = String::new();
             let mut round_reasoning = String::new();
             let mut last_chunk_tool_calls: Vec<crate::engine::inference::AccumulatedToolCall> = Vec::new();
-            // L3：双超时——连接30s + 总流超时。防止 keepalive 帧无限续命
+            // L3：三超时——连接30s + 总流 + 无内容超时。keepalive 帧无法无限续命
             let conn_timeout = std::time::Duration::from_secs(30);
-            let stream_total_timeout = std::time::Duration::from_secs(if use_thinking { 180 } else { 90 });
+            let total_timeout = std::time::Duration::from_secs(if use_thinking { 300 } else { 150 });
+            let no_content_timeout = std::time::Duration::from_secs(45);
             let stream_result = tokio::time::timeout(conn_timeout, client.chat_stream(conversation.clone())).await
                 .unwrap_or_else(|_| Err(crate::error::ForgeError::Api("API连接超时".into())));
 
@@ -2240,24 +2241,39 @@ pub async fn chat_handler(
                 Ok(mut stream) => {
                     use futures::StreamExt;
                     let mut acc = crate::engine::stream::StreamAccumulator::new();
-                    let stream_deadline = tokio::time::Instant::now() + stream_total_timeout;
+                    let total_deadline = tokio::time::Instant::now() + total_timeout;
+                    let mut last_content = tokio::time::Instant::now();
                     loop {
                         let now = tokio::time::Instant::now();
-                        if now >= stream_deadline {
-                            tracing::warn!("[chat] 流总超时 {}s，已收内容={}B", stream_total_timeout.as_secs(), acc.content.len());
-                            if acc.can_degrade() {
+                        // 总超时
+                        if now >= total_deadline {
+                            tracing::warn!("[chat] 总超时 {}s，已收={}B", total_timeout.as_secs(), acc.content.len());
+                            let msg = if acc.can_degrade() { "\n⚠️ 响应超时\n" } else { "" };
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "chunk", "content": msg}).to_string()
+                            )));
+                            if !acc.can_degrade() {
                                 let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应超时\n"}).to_string()
-                                )));
-                            } else {
-                                let _ = tx.send(Ok(Event::default().data(
-                                    serde_json::json!({"type": "error", "message": format!("响应超时({}s)，未收到任何内容", stream_total_timeout.as_secs())}).to_string()
+                                    serde_json::json!({"type": "error", "message": format!("响应超时({}s)", total_timeout.as_secs())}).to_string()
                                 )));
                             }
                             break;
                         }
-                        let remaining = stream_deadline.duration_since(now);
-                        let chunk = tokio::time::timeout(remaining, stream.next()).await;
+                        // 无内容超时（keepalive 帧无法续命）
+                        let idle = now.duration_since(last_content);
+                        if idle >= no_content_timeout {
+                            tracing::warn!("[chat] 无内容超时 {}s，断开", idle.as_secs());
+                            if acc.can_degrade() {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应中断\n"}).to_string()
+                                )));
+                            }
+                            break;
+                        }
+                        // 取两者中较短的等待时间
+                        let to_deadline = if now < total_deadline { total_deadline.duration_since(now) } else { std::time::Duration::ZERO };
+                        let max_wait = std::cmp::min(to_deadline, no_content_timeout.saturating_sub(idle));
+                        let chunk = tokio::time::timeout(max_wait, stream.next()).await;
                         let chunk_result = match chunk {
                             Ok(Some(c)) => c,
                             Ok(None) => break, // 流正常结束
@@ -2279,6 +2295,7 @@ pub async fn chat_handler(
                                 // 合并两者确保前端始终能渲染
                                 let combined = format!("{}{}", new_reasoning, new_content);
                                 if !combined.is_empty() {
+                                    last_content = tokio::time::Instant::now(); // 有实际内容，重置无内容超时
                                     if !new_content.is_empty() { round_text = acc.content.clone(); }
                                     if !new_reasoning.is_empty() { round_reasoning = acc.reasoning.clone(); }
                                     let _ = tx.send(Ok(Event::default().data(
@@ -2286,6 +2303,7 @@ pub async fn chat_handler(
                                     )));
                                 }
                                 if !acc.tool_calls.is_empty() {
+                                    last_content = tokio::time::Instant::now(); // 工具调用也算进度
                                     last_chunk_tool_calls = acc.tool_calls.clone();
                                 }
                                 if acc.is_done() { break; }

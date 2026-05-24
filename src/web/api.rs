@@ -2152,12 +2152,12 @@ pub async fn chat_handler(
         // L4: 统一用紧凑prompt——完整版4498字符导致DeepSeek Pro长文本处理极慢甚至挂死
         let system_msg = crate::system_prompt::get_system_prompt_compact();
         // 根据复杂度动态设定输出上限（DeepSeek V4 最大输出 384K）
-        // L4: 强制AI用write工具——聊天输出上限收紧
-        // 超出上限的生成会被截断，AI自然会选择write工具写文件
+        // L4: Claude Code 风格——极小聊天输出，强迫用工具
+        // 思考(thinking)和实际回复共享 max_tokens，收紧回复预算迫使AI用write
         let max_out_tokens: u32 = match decision.complexity {
-            crate::engine::router::Complexity::Simple => 4096,
-            crate::engine::router::Complexity::Moderate => 8192,
-            crate::engine::router::Complexity::Complex => 32768,
+            crate::engine::router::Complexity::Simple => 2048,
+            crate::engine::router::Complexity::Moderate => 4096,
+            crate::engine::router::Complexity::Complex => 16384, // Complex保留足够thinking空间
         };
 
         // L3: 项目上下文，全局超时保证永不阻塞聊天流

@@ -558,10 +558,25 @@ fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
             description: "匿名提交修复策略到社区经验池（格式: 错误模式|修复方案|诊断）".into(),
             parameters: serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"pattern|fix|diagnosis"}},"required":["content"]}),
         }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "web-fetch".into(),
+            description: "抓取网页实际内容（查API文档/技术资料），URL必须完整含https://".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"url":{"type":"string","description":"完整URL，如 https://docs.rs/tokio/latest/tokio/"}},"required":["url"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "todo".into(),
+            description: "创建/更新任务清单（复杂任务拆解跟踪）。tasks数组每项含content和status(pending/in_progress/completed)".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}}}}},"required":["tasks"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "ask".into(),
+            description: "向用户发起多选提问，用于需求模糊时澄清。仅Flash可用".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"question":{"type":"string","description":"问题"},"options":{"type":"array","items":{"type":"string"},"description":"2-4个选项"}},"required":["question","options"]}),
+        }},
     ]
 }
 
-/// Pro 专用精简工具集（6个核心工具，避免13个工具+思考模式导致超时）
+/// Pro 专用精简工具集（10个核心工具，避免工具爆炸导致思考超时）
 fn build_pro_tools() -> Vec<crate::engine::inference::ToolDef> {
     use crate::engine::inference::{ToolDef, ToolFunction};
     vec![
@@ -604,6 +619,16 @@ fn build_pro_tools() -> Vec<crate::engine::inference::ToolDef> {
             name: "lsp".into(),
             description: "cargo check 代码诊断，返回编译错误和警告".into(),
             parameters: serde_json::json!({"type":"object","properties":{"file":{"type":"string","description":"可选：指定文件"}}}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "web-fetch".into(),
+            description: "抓取网页实际内容（查API文档/技术资料），URL必须完整含https://".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"url":{"type":"string","description":"完整URL"}},"required":["url"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "todo".into(),
+            description: "创建/更新任务清单。tasks数组每项含content和status(pending/in_progress/completed)".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}}}}},"required":["tasks"]}),
         }},
     ]
 }
@@ -1259,6 +1284,9 @@ fn convert_native_args(tool: &str, json_args: &str) -> String {
         "exec" => v["command"].as_str().unwrap_or("").to_string(),
         "lsp" => v["file"].as_str().unwrap_or("").to_string(),
         "save" => v["content"].as_str().unwrap_or("").to_string(),
+        "web-fetch" => v["url"].as_str().unwrap_or("").to_string(),
+        "todo" => serde_json::to_string(&v["tasks"]).unwrap_or_else(|_| json_args.to_string()),
+        "ask" => format!("Q: {} [{}]", v["question"].as_str().unwrap_or(""), v["options"].as_array().map(|a| a.iter().filter_map(|o| o.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()),
         _ => json_args.to_string(),
     }
 }
@@ -1569,6 +1597,33 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
             collect_files(&base_dir, &ext_match, &mut results, 0);
             if results.is_empty() { format!("glob '{}' 无匹配文件", pattern) }
             else { format!("glob '{}' 找到 {} 个文件:\n{}", pattern, results.len(), results.join("\n")) }
+        }
+        "web-fetch" => {
+            let url = arg.trim();
+            if !url.starts_with("http") { format!("URL 必须以 http/https 开头: {}", url) }
+            else {
+                match reqwest::Client::new().get(url).timeout(std::time::Duration::from_secs(10))
+                    .header("User-Agent", "ForgeShell/1.0").send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        match resp.text().await {
+                            Ok(text) => {
+                                // 只取前 8000 字符，避免超长
+                                let truncated = if text.len() > 8000 { &text[..8000] } else { &text };
+                                format!("[{}] {}\n{}\n(共{}字符)", status.as_u16(), url, truncated, text.len())
+                            }
+                            Err(e) => format!("读取响应失败: {}", e),
+                        }
+                    }
+                    Err(e) => format!("请求失败: {}", e),
+                }
+            }
+        }
+        "todo" => {
+            format!("任务清单已记录: {}", arg.chars().take(500).collect::<String>())
+        }
+        "ask" => {
+            format!("问题已发送给用户: {}", arg.chars().take(200).collect::<String>())
         }
         _ => format!("工具 {} 不支持在工具循环中自动执行", tool),
     }

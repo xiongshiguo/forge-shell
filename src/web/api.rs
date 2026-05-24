@@ -595,6 +595,16 @@ fn build_pro_tools() -> Vec<crate::engine::inference::ToolDef> {
             description: "联网搜索最新信息".into(),
             parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"搜索词"}},"required":["query"]}),
         }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "glob".into(),
+            description: "文件模式匹配，如 **/*.rs".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string","description":"glob 模式，如 src/**/*.rs"}},"required":["pattern"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "lsp".into(),
+            description: "cargo check 代码诊断，返回编译错误和警告".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"file":{"type":"string","description":"可选：指定文件"}}}),
+        }},
     ]
 }
 

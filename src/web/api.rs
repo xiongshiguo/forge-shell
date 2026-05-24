@@ -561,6 +561,43 @@ fn build_tool_defs() -> Vec<crate::engine::inference::ToolDef> {
     ]
 }
 
+/// Pro 专用精简工具集（6个核心工具，避免13个工具+思考模式导致超时）
+fn build_pro_tools() -> Vec<crate::engine::inference::ToolDef> {
+    use crate::engine::inference::{ToolDef, ToolFunction};
+    vec![
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "read".into(),
+            description: "读取文件内容，支持行号范围".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"start":{"type":"integer"},"end":{"type":"integer"}},"required":["path"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "write".into(),
+            description: "创建新文件或完全覆写".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "edit".into(),
+            description: "精确替换文件中的字符串".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "search".into(),
+            description: "ripgrep 代码搜索".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string","description":"正则或关键词"},"path":{"type":"string"}},"required":["pattern"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "exec".into(),
+            description: "执行命令(白名单: cargo check/build/test/fmt/clippy/doc/new/init/update/tree/metadata, git status/diff/log/branch/add/commit/stash/checkout/switch/restore/rebase/clone, ls/dir/echo/type/rg/mkdir/md/rustc/rustup)".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string","description":"shell 命令"}},"required":["command"]}),
+        }},
+        ToolDef { tool_type: "function".into(), function: ToolFunction {
+            name: "web".into(),
+            description: "联网搜索最新信息".into(),
+            parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string","description":"搜索词"}},"required":["query"]}),
+        }},
+    ]
+}
+
 fn load_context() -> String {
     let path = context_file_path();
     if path.exists() {
@@ -2004,12 +2041,8 @@ pub async fn chat_handler(
             Ok(g) => g.select_best(),
             Err(_) => "v1-full".to_string(),
         };
-        let is_flash = decision.model.contains("flash");
-        let system_msg = if is_flash {
-            crate::system_prompt::get_system_prompt_compact()
-        } else {
-            crate::system_prompt::get_system_prompt()
-        };
+        // L4: 统一用紧凑prompt——完整版4498字符导致DeepSeek Pro长文本处理极慢甚至挂死
+        let system_msg = crate::system_prompt::get_system_prompt_compact();
         // 根据复杂度动态设定输出上限（DeepSeek V4 最大输出 384K）
         let max_out_tokens: u32 = match decision.complexity {
             crate::engine::router::Complexity::Simple => 16384,
@@ -2207,10 +2240,13 @@ pub async fn chat_handler(
 
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
         // 规划模式禁用写工具（物理强制执行）
+        let is_pro = decision.model.contains("pro");
         let tool_defs = if mode == "plan" {
             build_readonly_tools()
+        } else if is_pro {
+            build_pro_tools() // Pro用6核心工具，减少思考负担
         } else {
-            build_tool_defs()
+            build_tool_defs() // Flash用全13工具
         };
         // 思考模式：仅 Complex 任务启用（Pro 超时降级 Flash 时自动关闭）
         let mut use_thinking = matches!(decision.complexity, crate::engine::router::Complexity::Complex);

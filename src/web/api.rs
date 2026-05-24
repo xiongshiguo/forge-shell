@@ -198,16 +198,21 @@ async fn check_latest_version() -> Result<Option<String>, reqwest::Error> {
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
     let resp = client
-        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/tags?per_page=5")
+        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/tags?per_page=100")
         .header("User-Agent", "ForgeShell-UpdateCheck")
         .send()
         .await?;
     let json: serde_json::Value = resp.json().await?;
-    // 取最新 tag（列表已按时间降序）
-    let tag = json.as_array()
-        .and_then(|a| a.first())
-        .and_then(|t| t["name"].as_str())
-        .map(|s| s.trim_start_matches('v').to_string());
+    // Tags API 按名称排序，需要手动比较版本号取最大
+    let tag = json.as_array().and_then(|tags| {
+        tags.iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.trim_start_matches('v').to_string()))
+            .max_by(|a, b| {
+                let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
+                let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
+                a_parts.cmp(&b_parts)
+            })
+    });
     Ok(tag)
 }
 

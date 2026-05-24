@@ -65,7 +65,7 @@ impl Conversation {
         };
 
         // thinking 模式一致性：关闭时清除 reasoning
-        if !self.thinking_enabled { msg.reasoning_content = None; }
+        if !self.thinking_enabled { msg.reasoning_content = String::new(); }
 
         self.last_assistant_idx = Some(self.messages.len());
         self.messages.push(msg);

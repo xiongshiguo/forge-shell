@@ -314,10 +314,10 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub tool_call_id: Option<String>,
-    /// DeepSeek V4 thinking 模式的推理内容（必须回传）
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// DeepSeek V4 推理内容——空字符串省略，有值必须回传
+    #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(default)]
-    pub reasoning_content: Option<String>,
+    pub reasoning_content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,19 +342,19 @@ pub struct ToolCallFunc {
 
 impl ChatMessage {
     pub fn system(content: &str) -> Self {
-        Self { role: "system".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "system".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: String::new() }
     }
     pub fn user(content: &str) -> Self {
-        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: String::new() }
     }
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: String::new() }
     }
     pub fn assistant_with_reasoning(content: &str, reasoning: &str) -> Self {
-        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning.into()) } }
+        Self { role: "assistant".into(), content: content.into(), tool_calls: None, tool_call_id: None, reasoning_content: reasoning.to_string() }
     }
     pub fn tool_result(tool_call_id: &str, content: &str) -> Self {
-        Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None, reasoning_content: None }
+        Self { role: "tool".into(), content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: None, reasoning_content: String::new() }
     }
 }
 
@@ -364,10 +364,10 @@ impl ChatMessage {
 /// 3. thinking 关闭但有 reasoning_content → 清除
 /// 4. tool_call_id 为空 → 生成占位 ID
 fn validate_messages(mut msgs: Vec<ChatMessage>, thinking_enabled: bool) -> Vec<ChatMessage> {
-    // 修复 3: thinking 关闭时清除所有 reasoning_content
+    // 修复 3: thinking 关闭时将 reasoning_content 设为空串（保留字段，避免400错误）
     if !thinking_enabled {
         for m in &mut msgs {
-            if m.role == "assistant" { m.reasoning_content = None; }
+            if m.role == "assistant" { m.reasoning_content = String::new(); }
         }
     }
 
@@ -529,7 +529,7 @@ mod tests {
                 function: Some(ToolCallFunc { name: Some("read".into()), arguments: Some("{}".into()) }),
                 index: None,
             }]),
-            tool_call_id: None, reasoning_content: None,
+            tool_call_id: None, reasoning_content: String::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(!json.contains("\"content\":\"\""), "assistant+tool_calls content should be absent (null): {}", json);

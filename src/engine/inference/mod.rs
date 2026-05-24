@@ -314,8 +314,7 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub tool_call_id: Option<String>,
-    /// DeepSeek V4 推理内容——空字符串省略，有值必须回传
-    #[serde(skip_serializing_if = "String::is_empty")]
+    /// DeepSeek V4 推理内容——必须始终存在于 assistant 消息中（400 错误根因）
     #[serde(default)]
     pub reasoning_content: String,
 }

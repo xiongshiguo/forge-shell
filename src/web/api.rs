@@ -1941,13 +1941,16 @@ pub async fn chat_handler(
     let state_clone = state.clone();
 
     tokio::spawn(async move {
+        let msg_len = req.message.len();
+        let mode = req.mode.as_deref().unwrap_or("assist");
+        tracing::info!("[chat] 收到消息 len={} mode={}", msg_len, mode);
+
         // 提前 clone 用于 panic 日志
         let _ = tx.send(Ok(Event::default().data("{\"type\":\"trace\",\"msg\":\"start\"}")));
         let mut config = state_clone.config.lock().await.clone();
         let _ = tx.send(Ok(Event::default().data("{\"type\":\"trace\",\"msg\":\"post_config\"}")));
 
         // 模型路由：模式 × 复杂度 动态选择模型
-        let mode = req.mode.as_deref().unwrap_or("assist");
         let router = crate::engine::router::ModelRouter::new(
             config.ai.default_model.clone(),
             config.ai.flash_model.clone(),
@@ -1978,6 +1981,8 @@ pub async fn chat_handler(
         }
         config.ai.default_model = decision.model.clone();
 
+        tracing::info!("[chat] 路由 model={} complexity={:?} cost={}", decision.model, decision.complexity, decision.estimated_cost);
+
         // 模型选择对用户隐身（只通过顶部栏费用体现）
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "meta", "model": decision.model, "mode": mode, "cost": decision.estimated_cost}).to_string()
@@ -2005,9 +2010,10 @@ pub async fn chat_handler(
             std::time::Duration::from_secs(5),
             build_project_context(),
         ).await.unwrap_or_else(|_| {
-            tracing::warn!("项目上下文构建超时，跳过");
+            tracing::warn!("[chat] 项目上下文超时，跳过");
             String::new()
         });
+        tracing::info!("[chat] 项目上下文完成 len={}", project_info.len());
 
         // L3: 会话压缩——旧轮摘要，新轮完整
         let context = load_context();
@@ -2026,7 +2032,7 @@ pub async fn chat_handler(
         );
         session_mgr.save_latest(&crate::engine::session::SessionRecord {
             date: chrono::Utc::now().format("%m-%d %H:%M").to_string(),
-            turn: *state_clone.session_turn.lock().await + 1,
+            turn: *turn,
             messages: vec![crate::engine::session::SessionMessage { role: "user".into(), content: req.message.clone() }],
         });
 
@@ -2209,34 +2215,64 @@ pub async fn chat_handler(
                 }
             };
 
+            tracing::info!("[chat] API调用 round={} msgs={} tools={} thinking={}", tool_round, conversation.len(), tool_defs.len(), use_thinking);
+
             let mut round_text = String::new();
             let mut round_reasoning = String::new();
             let mut last_chunk_tool_calls: Vec<crate::engine::inference::AccumulatedToolCall> = Vec::new();
-            // L3：整个 API 调用+流读取强制超时（reqwest timeout 对流不生效）
-            let api_timeout = std::time::Duration::from_secs(if use_thinking { 300 } else { 120 });
-            let stream_result = tokio::time::timeout(api_timeout, client.chat_stream(conversation.clone())).await
-                .unwrap_or_else(|_| Err(crate::error::ForgeError::Api("请求超时".into())));
+            // L3：双超时——连接30s + 总流超时。防止 keepalive 帧无限续命
+            let conn_timeout = std::time::Duration::from_secs(30);
+            let stream_total_timeout = std::time::Duration::from_secs(if use_thinking { 180 } else { 90 });
+            let stream_result = tokio::time::timeout(conn_timeout, client.chat_stream(conversation.clone())).await
+                .unwrap_or_else(|_| Err(crate::error::ForgeError::Api("API连接超时".into())));
 
             match stream_result {
                 Ok(mut stream) => {
                     use futures::StreamExt;
                     let mut acc = crate::engine::stream::StreamAccumulator::new();
-                    while let Some(chunk_result) = stream.next().await {
-                        match acc.ingest(chunk_result) {
-                            Ok(()) => {
-                                // 内容已累积到 acc，同步发送到前端
-                                let new_content = &acc.content[round_text.len()..];
-                                if !new_content.is_empty() {
-                                    round_text = acc.content.clone();
+                    let stream_deadline = tokio::time::Instant::now() + stream_total_timeout;
+                    loop {
+                        let now = tokio::time::Instant::now();
+                        if now >= stream_deadline {
+                            tracing::warn!("[chat] 流总超时 {}s，已收内容={}B", stream_total_timeout.as_secs(), acc.content.len());
+                            if acc.can_degrade() {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应超时\n"}).to_string()
+                                )));
+                            } else {
+                                let _ = tx.send(Ok(Event::default().data(
+                                    serde_json::json!({"type": "error", "message": format!("响应超时({}s)，未收到任何内容", stream_total_timeout.as_secs())}).to_string()
+                                )));
+                            }
+                            break;
+                        }
+                        let remaining = stream_deadline.duration_since(now);
+                        let chunk = tokio::time::timeout(remaining, stream.next()).await;
+                        let chunk_result = match chunk {
+                            Ok(Some(c)) => c,
+                            Ok(None) => break, // 流正常结束
+                            Err(_) => {
+                                // 剩余时间耗尽（等价于总超时）
+                                if acc.can_degrade() {
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "chunk", "content": new_content}).to_string()
+                                        serde_json::json!({"type": "chunk", "content": "\n⚠️ 响应超时\n"}).to_string()
                                     )));
                                 }
+                                break;
+                            }
+                        };
+                        match acc.ingest(chunk_result) {
+                            Ok(()) => {
+                                let new_content = &acc.content[round_text.len()..];
                                 let new_reasoning = &acc.reasoning[round_reasoning.len()..];
-                                if !new_reasoning.is_empty() {
-                                    round_reasoning = acc.reasoning.clone();
+                                // DeepSeek V4 Pro 把输出放在 reasoning_content，content 常为 null
+                                // 合并两者确保前端始终能渲染
+                                let combined = format!("{}{}", new_reasoning, new_content);
+                                if !combined.is_empty() {
+                                    if !new_content.is_empty() { round_text = acc.content.clone(); }
+                                    if !new_reasoning.is_empty() { round_reasoning = acc.reasoning.clone(); }
                                     let _ = tx.send(Ok(Event::default().data(
-                                        serde_json::json!({"type": "reasoning", "content": new_reasoning}).to_string()
+                                        serde_json::json!({"type": "chunk", "content": combined}).to_string()
                                     )));
                                 }
                                 if !acc.tool_calls.is_empty() {

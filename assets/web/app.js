@@ -350,9 +350,18 @@ async function checkUpdate() {
     var r = await fetch('/api/update-check');
     var d = await r.json();
     if (d.update_available) {
-      addMsg('system', '新版本 v' + d.latest + ' 可用（当前 v' + d.current + '）');
+      document.getElementById('update-banner').style.display = 'flex';
+      document.getElementById('update-text').textContent = 'v' + d.latest + ' 可用！当前 v' + d.current;
     }
   } catch(e) {}
+}
+
+async function doUpdate() {
+  document.getElementById('update-text').textContent = '下载中…';
+  var r = await fetch('/api/update-now', {method:'POST'});
+  var d = await r.json();
+  if (d.ok) { document.getElementById('update-text').textContent = d.message; }
+  else { document.getElementById('update-text').textContent = '更新失败: ' + (d.error || '?'); }
 }
 
 // === 统计刷新 ===

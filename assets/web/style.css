@@ -45,6 +45,18 @@ body {
 #setup-btn:hover { transform:translateY(-1px); box-shadow:0 4px 16px var(--purple-glow); }
 #setup-msg { margin-top:20px; font-size:14px; min-height:24px; }
 
+#update-banner {
+  display:flex; align-items:center; justify-content:center; gap:12px;
+  padding:8px; background:linear-gradient(135deg,var(--purple),#5b3ec4);
+  color:white; font-size:13px; flex-shrink:0; animation:fadeIn .3s ease;
+}
+#update-btn {
+  padding:5px 18px; background:white; color:var(--purple); border:none;
+  border-radius:6px; cursor:pointer; font-weight:600; font-size:12px;
+  font-family:var(--font); transition:transform .15s;
+}
+#update-btn:hover { transform:scale(1.05); }
+
 /* === 应用容器 === */
 #app { display:flex; flex-direction:column; height:100vh; }
 

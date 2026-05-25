@@ -123,14 +123,11 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
                 Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("找不到当前程序: {}", e)})),
             };
 
+            // L5: 双进程替换——写临时文件 + 脚本替换 + 退出
             let new_exe = current_exe.with_file_name(format!("forge-shell-v{}.exe", latest));
-            let backup_exe = current_exe.with_extension("exe.old");
 
-            // 下载新版本
             let client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-            {
+                .timeout(std::time::Duration::from_secs(120)).build() {
                 Ok(c) => c,
                 Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("创建下载客户端失败: {}", e)})),
             };
@@ -139,27 +136,27 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
                 Ok(resp) => {
                     match resp.bytes().await {
                         Ok(bytes) => {
-                            // 写到临时文件
                             if let Err(e) = std::fs::write(&new_exe, &bytes) {
-                                return Json(serde_json::json!({"ok": false, "error": format!("写入新版本失败: {}", e)}));
+                                return Json(serde_json::json!({"ok": false, "error": format!("下载失败: {}", e)}));
                             }
 
-                            // 备份旧版本
-                            std::fs::rename(&current_exe, &backup_exe).ok();
+                            // 写入替换脚本（Windows 批处理）
+                            let script = format!(
+                                "@echo off\r\n\
+                                 timeout /t 2 /nobreak >nul\r\n\
+                                 move /Y \"{}\" \"{}\"\r\n\
+                                 start \"\" \"{}\"\r\n\
+                                 del \"%~f0\"\r\n",
+                                new_exe.display(), current_exe.display(), current_exe.display()
+                            );
+                            let script_path = current_exe.with_file_name("forge-update.bat");
+                            std::fs::write(&script_path, script).ok();
 
-                            // 替换为新版本
-                            if let Err(e) = std::fs::rename(&new_exe, &current_exe) {
-                                // 恢复旧版本
-                                std::fs::rename(&backup_exe, &current_exe).ok();
-                                return Json(serde_json::json!({"ok": false, "error": format!("替换失败: {}", e)}));
-                            }
-
-                            // 启动新进程并退出当前进程
-                            let _ = std::process::Command::new(&current_exe)
-                                .arg("--web")
+                            // 启动脚本（独立进程），当前进程退出
+                            let _ = std::process::Command::new("cmd")
+                                .args(["/C", &script_path.to_string_lossy()])
                                 .spawn();
 
-                            // 延迟退出，让响应先发出去
                             tokio::spawn(async {
                                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                 std::process::exit(0);

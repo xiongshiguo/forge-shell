@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: 从 Gitee 克隆并强制推送到 GitHub
         run: |
-          git clone --mirror https://forgemaster:${{ secrets.GITEE_TOKEN }}@gitee.com/forgemaster/forge-shell.git mirror
+          git clone --bare https://forgemaster:${{ secrets.GITEE_TOKEN }}@gitee.com/forgemaster/forge-shell.git mirror
           cd mirror
           git remote add github https://xiongshiguo:${{ secrets.GH_TOKEN }}@github.com/xiongshiguo/forge-shell.git
-          git push --force --mirror github
+          git push --force github refs/heads/*:refs/heads/* refs/tags/*:refs/tags/*

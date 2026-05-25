@@ -161,7 +161,7 @@ async function streamChat(msg) {
       }
     }
   } catch(e) {
-    if (e.name === 'AbortError') return; // 用户中断
+    if (e.name === 'AbortError') { autoSaveSession(); return; } // 用户中断也保存
     // 即使出错，保存已收到的部分内容
     var text = streamMsg.querySelector('.msg-content').textContent;
     if (text.trim()) {
@@ -171,6 +171,7 @@ async function streamChat(msg) {
       addMsg('error', '连接中断: ' + (e.message || 'network error'));
       streamMsg.remove();
     }
+    autoSaveSession(); // 异常时保存当前进度
   } finally {
     activeAbortController = null;
     setSendButton(false);
@@ -246,6 +247,7 @@ function handleSSE(data, streamMsg, fullContent) {
     case 'error':
       addMsg('error', data.message);
       streamMsg.remove();
+      autoSaveSession(); // 错误时保存进度
       break;
 
     case 'done':

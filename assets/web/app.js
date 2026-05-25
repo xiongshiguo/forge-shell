@@ -147,6 +147,7 @@ async function streamChat(msg) {
     var decoder = new TextDecoder();
     var buffer = '';
     var fullContent = '';
+    var lastSave = Date.now();
 
     while (true) {
       var r = await reader.read();
@@ -158,6 +159,11 @@ async function streamChat(msg) {
         if (lines[i].startsWith('data: ')) {
           try { fullContent = handleSSE(JSON.parse(lines[i].slice(6)), streamMsg, fullContent); } catch(e) {}
         }
+      }
+      // 每 10 秒增量保存（不等 done，崩溃也不丢数据）
+      if (Date.now() - lastSave > 10000) {
+        autoSaveSession();
+        lastSave = Date.now();
       }
     }
   } catch(e) {
@@ -401,21 +407,19 @@ async function clearErrorLogs() {
   refreshErrorLogs();
 }
 
-// === 自动保存会话 ===
+// === 自动保存会话（全量存储，无截断） ===
 async function autoSaveSession() {
   var msgs = [];
   document.querySelectorAll('#messages .message').forEach(function(m) {
     var role = 'system';
     if (m.classList.contains('user')) role = 'user';
     else if (m.classList.contains('assistant')) role = 'assistant';
-    var text = m.textContent || '';
-    if (text.length > 200) text = text.substring(0, 200) + '…';
-    msgs.push({role: role, content: text});
+    msgs.push({role: role, content: m.textContent || ''});
   });
   if (msgs.length === 0) return;
   var turns = msgs.filter(function(m) { return m.role === 'user'; }).length;
   var lastUser = msgs.filter(function(m) { return m.role === 'user'; }).pop();
-  var preview = lastUser ? lastUser.content : '';
+  var preview = (lastUser ? lastUser.content : '').substring(0, 80);
   try {
     await fetch('/api/session/auto-save', {
       method:'POST',

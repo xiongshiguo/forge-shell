@@ -1031,23 +1031,32 @@ pub async fn session_auto_save_handler(
     let messages: Vec<serde_json::Value> = req["messages"].as_array()
         .map(|a| a.clone())
         .unwrap_or_default();
-    // 保存完整会话（含消息）
+
     let dir = crate::config::forge_data_dir().join("sessions");
     std::fs::create_dir_all(&dir).ok();
+
+    // 全量覆写 latest.json（兼容旧加载逻辑，启动恢复用）
     let session_id = chrono::Utc::now().format("%y%m%d-%H%M%S").to_string();
-    let session = serde_json::json!({
-        "id": session_id,
-        "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
-        "turns": turns,
-        "preview": preview.chars().take(80).collect::<String>(),
-        "messages": messages,
-        "auto_saved": true,
+    let latest = serde_json::json!({
+        "id": session_id, "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+        "turns": turns, "preview": preview.chars().take(80).collect::<String>(),
+        "messages": messages, "auto_saved": true,
     });
-    let session_json = serde_json::to_string_pretty(&session).unwrap_or_default();
-    let _ = std::fs::write(dir.join(format!("session_{}.json", session_id)), &session_json);
-    // 同时更新 latest.json（启动恢复用，含消息）
-    let _ = std::fs::write(dir.join("latest.json"), &session_json);
-    // 异步记录进化数据
+    let _ = std::fs::write(dir.join("latest.json"),
+        serde_json::to_string_pretty(&latest).unwrap_or_default());
+
+    // JSONL 追加式日志（Claude Code 风格：只追加不覆写，防崩溃）
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let jsonl_path = dir.join(format!("session_{}.jsonl", today));
+    let mut jsonl = std::fs::OpenOptions::new().create(true).append(true).open(&jsonl_path).unwrap();
+    use std::io::Write;
+    for msg in &messages {
+        let mut line = serde_json::to_string(msg).unwrap_or_default();
+        line.push('\n');
+        let _ = jsonl.write_all(line.as_bytes());
+    }
+    let _ = jsonl.flush();
+
     {
         let mut evo = state.evolution.lock().await;
         evo.record_turn(preview, "auto_save", true);
@@ -1055,18 +1064,38 @@ pub async fn session_auto_save_handler(
     Json(serde_json::json!({"ok": true}))
 }
 
-/// 获取当前会话（启动时自动恢复历史对话）
+/// 获取当前会话（优先 JSONL，回退 latest.json）
 pub async fn session_latest_handler() -> Json<serde_json::Value> {
     let dir = crate::config::forge_data_dir().join("sessions");
+    // 优先读今天的 JSONL
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let jsonl_path = dir.join(format!("session_{}.jsonl", today));
+    if let Ok(content) = std::fs::read_to_string(&jsonl_path) {
+        let messages: Vec<serde_json::Value> = content.lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .collect();
+        if !messages.is_empty() {
+            let turns = messages.iter().filter(|m| m["role"].as_str() == Some("user")).count();
+            let preview = messages.iter().rev()
+                .find(|m| m["role"].as_str() == Some("user"))
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or("")
+                .chars().take(80).collect::<String>();
+            return Json(serde_json::json!({"ok": true, "session": {
+                "date": chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+                "turns": turns, "preview": preview, "messages": messages,
+            }}));
+        }
+    }
+    // 回退 latest.json
     let path = dir.join("latest.json");
     match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(session) => Json(serde_json::json!({"ok": true, "session": session})),
-                Err(_) => Json(serde_json::json!({"ok": false, "error": "parse failed"})),
-            }
-        }
-        Err(_) => Json(serde_json::json!({"ok": false, "messages": []})),
+        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(session) => Json(serde_json::json!({"ok": true, "session": session})),
+            Err(_) => Json(serde_json::json!({"ok": false})),
+        },
+        Err(_) => Json(serde_json::json!({"ok": false})),
     }
 }
 

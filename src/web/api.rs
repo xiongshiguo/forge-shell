@@ -2514,6 +2514,19 @@ pub async fn chat_handler(
                     }
                 }
                 Err(e) => {
+                    let is_network_err = e.to_string().contains("error sending request")
+                        || e.to_string().contains("connection")
+                        || e.to_string().contains("timeout")
+                        || e.to_string().contains("dns");
+                    // 网络瞬时故障：重试一次
+                    if is_network_err && tool_round == 0 {
+                        let retry_msg = format!("网络抖动，1秒后重试…");
+                        let _ = tx.send(Ok(Event::default().data(
+                            serde_json::json!({"type": "chunk", "content": retry_msg}).to_string()
+                        )));
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
                     let error_msg = format!("API 调用失败: {}", e);
                     state_clone.error_logger.log("api", "error", &error_msg, &format!("model={} tokens={}", decision.model, max_out_tokens));
                     let _ = tx.send(Ok(Event::default().data(

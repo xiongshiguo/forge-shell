@@ -2156,7 +2156,7 @@ pub async fn chat_handler(
         // 不需要单独拆分预算——UI分离已足够，DeepSeek API不支持独立thinking_budget
         let max_out_tokens: u32 = match decision.complexity {
             crate::engine::router::Complexity::Simple => 4096,
-            crate::engine::router::Complexity::Moderate => 8192,
+            crate::engine::router::Complexity::Moderate => 16384, // write工具内容计入token, 8K不够
             crate::engine::router::Complexity::Complex => 16384,
         };
 

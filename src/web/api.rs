@@ -2154,10 +2154,12 @@ pub async fn chat_handler(
         // 根据复杂度动态设定输出上限（DeepSeek V4 最大输出 384K）
         // Claude Code 对齐: thinking+回复共享 max_tokens（ccswitch 同逻辑）
         // 不需要单独拆分预算——UI分离已足够，DeepSeek API不支持独立thinking_budget
+        // 输出上限: Simple短回答 / Moderate中等文件 / Complex大项目
+        // write工具内容计入token, Moderate以上需要足够空间
         let max_out_tokens: u32 = match decision.complexity {
             crate::engine::router::Complexity::Simple => 4096,
-            crate::engine::router::Complexity::Moderate => 16384, // write工具内容计入token, 8K不够
-            crate::engine::router::Complexity::Complex => 16384,
+            crate::engine::router::Complexity::Moderate => 65536,
+            crate::engine::router::Complexity::Complex => 131072,
         };
 
         // L3: 项目上下文，全局超时保证永不阻塞聊天流

@@ -18,6 +18,6 @@ fn main() {
     std::fs::write(&dest, format!("pub const VERSION: &str = \"{}\";\n", version))
         .expect("failed to write version.rs");
 
-    println!("cargo:rerun-if-changed=assets/web/");
-    // 每次都重新检测（git describe 是轻量操作）
+    // L5: 不设 rerun-if-changed，每次 cargo build 都重新检测 git tag
+    // git describe 极其轻量（<1ms），不会影响构建速度
 }

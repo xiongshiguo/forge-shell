@@ -1,0 +1,17 @@
+name: 从 Gitee 同步
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # 每30分钟
+  workflow_dispatch:           # 手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 从 Gitee 克隆并强制推送到 GitHub
+        run: |
+          git clone --mirror https://forgemaster:${{ secrets.GITEE_TOKEN }}@gitee.com/forgemaster/forge-shell.git mirror
+          cd mirror
+          git remote add github https://xiongshiguo:${{ secrets.GH_TOKEN }}@github.com/xiongshiguo/forge-shell.git
+          git push --force --mirror github

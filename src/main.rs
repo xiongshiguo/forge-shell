@@ -76,6 +76,23 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     setup_logging(&cli.log_level)?;
 
+    // L3: 崩溃日志——panic 时写 crash.log，不再静默死亡
+    let crash_log = config::forge_data_dir().join("logs").join("crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = format!(
+            "PANIC {} {}\n{:?}\n",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            info,
+            std::backtrace::Backtrace::capture()
+        );
+        let _ = std::fs::OpenOptions::new().create(true).append(true)
+            .open(&crash_log).map(|mut f| {
+                use std::io::Write;
+                let _ = f.write_all(msg.as_bytes());
+            });
+        eprintln!("{}", msg);
+    }));
+
     tracing::info!("🔥 熔炉 (ForgeShell) 启动中...");
 
     let mut cfg = config::Config::load()?;

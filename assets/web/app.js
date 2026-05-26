@@ -313,31 +313,70 @@ function scrollDown() {
 }
 
 // === Markdown 渲染 ===
+// Claude Code 风格 Markdown 渲染器
 function renderMarkdown(text) {
   if (!text) return '';
+  var blocks = [];
   var html = text;
-  // 代码块 ```...```
+
+  // 1. 保护代码块（用占位符，防止内部内容被后续规则污染）
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
-    return '<pre class="code-block"><code>' + escapeHtml(code.trimEnd()) + '</code></pre>';
+    var id = blocks.length;
+    blocks.push('<pre class="code-block"><code class="language-' + (lang||'') + '">' + escapeHtml(code.trimEnd()) + '</code></pre>');
+    return '\x00BLOCK' + id + '\x00';
   });
-  // 行内代码 `...`
-  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
-  // 粗体 **...**
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // 斜体 *...*
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  // 无序列表
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="md-list">$&</ul>');
-  // 表格
+
+  // 2. 保护行内代码
+  html = html.replace(/`([^`]+)`/g, function(m, code) {
+    var id = blocks.length;
+    blocks.push('<code class="inline-code">' + escapeHtml(code) + '</code>');
+    return '\x00BLOCK' + id + '\x00';
+  });
+
+  // 3. 标题
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // 4. 粗体/斜体
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // 5. 表格（行级处理）
   html = html.replace(/^\|(.+)\|$/gm, function(m) {
     var cells = m.split('|').filter(function(c) { return c.trim(); });
     if (cells.every(function(c) { return /^[-:]+$/.test(c.trim()); })) return '';
     return '<tr>' + cells.map(function(c) { return '<td>' + c.trim() + '</td>'; }).join('') + '</tr>';
   });
-  html = html.replace(/(<tr>.*<\/tr>\n?)+/g, '<table class="md-table">$&</table>');
-  // 换行
+  html = html.replace(/(<tr>.*<\/tr>\s*)+/g, '<table class="md-table">$&</table>');
+
+  // 6. 有序列表和无序列表
+  html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+  html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, function(m) {
+    // 判断是否有序（检查原始文本）
+    return '<ul class="md-list">' + m + '</ul>';
+  });
+
+  // 7. 水平线
+  html = html.replace(/^---$/gm, '<hr>');
+
+  // 8. 段落：连续两个换行 → </p><p>
+  html = html.replace(/\n\n+/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+
+  // 9. 单换行 → <br>（在段落内）
   html = html.replace(/\n/g, '<br>');
+
+  // 10. 清理空段落
+  html = html.replace(/<p>\s*<\/p>/g, '');
+
+  // 11. 恢复代码块
+  for (var i = 0; i < blocks.length; i++) {
+    html = html.replace('\x00BLOCK' + i + '\x00', blocks[i]);
+  }
+
   return html;
 }
 

@@ -2227,7 +2227,7 @@ pub async fn chat_handler(
         // 输出上限: Simple短回答 / Moderate中等文件 / Complex大项目
         // write工具内容计入token, Moderate以上需要足够空间
         let max_out_tokens: u32 = match decision.complexity {
-            crate::engine::router::Complexity::Simple => 4096,
+            crate::engine::router::Complexity::Simple => 8192, // 文件创建任务需要足够token写完整内容
             crate::engine::router::Complexity::Moderate => 65536,
             crate::engine::router::Complexity::Complex => 131072,
         };

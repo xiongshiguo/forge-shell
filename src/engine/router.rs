@@ -135,6 +135,15 @@ impl ModelRouter {
             "分析", "调试", "优化", "修改", "实现", "集成",
             "测试", "部署", "配置", "重构",
         ];
+        // L4: 文件创建类任务直接Simple——防止过度思考耗尽token
+        let creation_keywords = [
+            "html", "htm", "做一个", "写一个", "创建", "生成", "弄个",
+            "课表", "页面", "网站",
+        ];
+        if creation_keywords.iter().any(|k| intent_lower.contains(k)) {
+            return Complexity::Simple;
+        }
+
         let simple_keywords = [
             "解释", "什么是", "怎么", "例子", "示例", "格式化",
             "补全", "修复拼写", "注释", "重命名",

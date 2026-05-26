@@ -112,7 +112,13 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
     let current = crate::system_prompt::VERSION;
     match check_latest_version().await {
         Ok(Some(latest)) if latest != current => {
+            // GitHub Actions CI 自动构建 exe，优先从 GitHub 下载
             let download_url = format!(
+                "https://github.com/xiongshiguo/forge-shell/releases/download/v{0}/forge-shell.exe",
+                latest
+            );
+            // Gitee 兜底
+            let fallback_url = format!(
                 "https://gitee.com/forgemaster/forge-shell/releases/download/v{0}/forge-shell.exe",
                 latest
             );
@@ -132,53 +138,52 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
                 Err(e) => return Json(serde_json::json!({"ok": false, "error": format!("创建下载客户端失败: {}", e)})),
             };
 
-            match client.get(&download_url).send().await {
-                Ok(resp) => {
-                    match resp.bytes().await {
-                        Ok(bytes) => {
-                            // L3: 验证下载的是合法 PE 文件（MZ 头），防止写入损坏 exe
-                            if bytes.len() < 1024 || &bytes[0..2] != b"MZ" {
-                                return Json(serde_json::json!({"ok": false, "error": "下载的文件不是有效的 Windows 可执行程序"}));
-                            }
-                            if let Err(e) = std::fs::write(&new_exe, &bytes) {
-                                return Json(serde_json::json!({"ok": false, "error": format!("下载失败: {}", e)}));
-                            }
-
-                            // 再次验证写入的文件
-                            let verified = std::fs::read(&new_exe).map(|b| b.len() > 1024 && &b[0..2] == b"MZ").unwrap_or(false);
-                            if !verified {
-                                std::fs::remove_file(&new_exe).ok();
-                                return Json(serde_json::json!({"ok": false, "error": "写入验证失败，文件可能已损坏"}));
-                            }
-
-                            // 替换脚本：等旧进程退出 → copy 覆盖 → 启动新版
-                            let script = format!(
-                                "@echo off\r\n\
-                                 timeout /t 2 /nobreak >nul\r\n\
-                                 copy /Y \"{}\" \"{}\" >nul 2>&1\r\n\
-                                 if exist \"{}\" start \"\" \"{}\"\r\n\
-                                 del \"%~f0\"\r\n",
-                                new_exe.display(), current_exe.display(),
-                                current_exe.display(), current_exe.display()
-                            );
-                            let script_path = current_exe.with_file_name("forge-update.bat");
-                            std::fs::write(&script_path, script).ok();
-
-                            let _ = std::process::Command::new("cmd")
-                                .args(["/C", &script_path.to_string_lossy()])
-                                .spawn();
-
-                            tokio::spawn(async {
-                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                std::process::exit(0);
-                            });
-
-                            Json(serde_json::json!({"ok": true, "message": format!("已更新到 v{}，正在重启...", latest)}))
+            // 尝试下载：GitHub 优先（CI 自动构建），Gitee 兜底
+            let mut bytes = None;
+            for url in [&download_url, &fallback_url] {
+                if let Ok(resp) = client.get(url).send().await {
+                    if let Ok(data) = resp.bytes().await {
+                        if data.len() > 1024 && &data[0..2] == b"MZ" {
+                            bytes = Some(data);
+                            break;
                         }
-                        Err(e) => Json(serde_json::json!({"ok": false, "error": format!("下载失败: {}", e)})),
                     }
                 }
-                Err(e) => Json(serde_json::json!({"ok": false, "error": format!("请求失败: {}", e)})),
+            }
+            match bytes {
+                Some(bytes) => {
+                    // L3: 验证下载的是合法 PE 文件（已在 for 循环中预检）
+                    if let Err(e) = std::fs::write(&new_exe, &bytes) {
+                        return Json(serde_json::json!({"ok": false, "error": format!("写入失败: {}", e)}));
+                    }
+                    // 再次验证写入的文件
+                    let verified = std::fs::read(&new_exe).map(|b| b.len() > 1024 && &b[0..2] == b"MZ").unwrap_or(false);
+                    if !verified {
+                        std::fs::remove_file(&new_exe).ok();
+                        return Json(serde_json::json!({"ok": false, "error": "写入验证失败"}));
+                    }
+                    // 替换脚本
+                    let script = format!(
+                        "@echo off\r\n\
+                         timeout /t 2 /nobreak >nul\r\n\
+                         copy /Y \"{}\" \"{}\" >nul 2>&1\r\n\
+                         if exist \"{}\" start \"\" \"{}\"\r\n\
+                         del \"%~f0\"\r\n",
+                        new_exe.display(), current_exe.display(),
+                        current_exe.display(), current_exe.display()
+                    );
+                    let script_path = current_exe.with_file_name("forge-update.bat");
+                    std::fs::write(&script_path, script).ok();
+                    let _ = std::process::Command::new("cmd")
+                        .args(["/C", &script_path.to_string_lossy()])
+                        .spawn();
+                    tokio::spawn(async {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        std::process::exit(0);
+                    });
+                    Json(serde_json::json!({"ok": true, "message": format!("已更新到 v{}，正在重启...", latest)}))
+                }
+                None => Json(serde_json::json!({"ok": false, "error": "未找到可下载的有效 exe（GitHub 和 Gitee 均无）"})),
             }
         }
         _ => Json(serde_json::json!({"ok": false, "error": "已是最新版本"})),

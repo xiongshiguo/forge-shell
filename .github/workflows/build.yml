@@ -100,3 +100,33 @@ jobs:
         with:
           name: forge-shell-ohos-x86_64
           path: target/x86_64-unknown-linux-musl/release/forge-shell
+
+  release:
+    name: 发布 GitHub Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-linux, build-ohos]
+    permissions:
+      contents: write
+    steps:
+      - name: 下载 Windows exe
+        uses: actions/download-artifact@v4
+        with:
+          name: forge-shell-windows-x86_64
+          path: artifacts/
+
+      - name: 下载 Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: forge-shell-linux-x86_64-musl
+          path: artifacts/
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            artifacts/forge-shell.exe
+            artifacts/forge-shell
+          draft: false
+          prerelease: false

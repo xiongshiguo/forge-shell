@@ -136,23 +136,34 @@ pub async fn update_now_handler() -> Json<serde_json::Value> {
                 Ok(resp) => {
                     match resp.bytes().await {
                         Ok(bytes) => {
+                            // L3: 验证下载的是合法 PE 文件（MZ 头），防止写入损坏 exe
+                            if bytes.len() < 1024 || &bytes[0..2] != b"MZ" {
+                                return Json(serde_json::json!({"ok": false, "error": "下载的文件不是有效的 Windows 可执行程序"}));
+                            }
                             if let Err(e) = std::fs::write(&new_exe, &bytes) {
                                 return Json(serde_json::json!({"ok": false, "error": format!("下载失败: {}", e)}));
                             }
 
-                            // 写入替换脚本（Windows 批处理）
+                            // 再次验证写入的文件
+                            let verified = std::fs::read(&new_exe).map(|b| b.len() > 1024 && &b[0..2] == b"MZ").unwrap_or(false);
+                            if !verified {
+                                std::fs::remove_file(&new_exe).ok();
+                                return Json(serde_json::json!({"ok": false, "error": "写入验证失败，文件可能已损坏"}));
+                            }
+
+                            // 替换脚本：等旧进程退出 → copy 覆盖 → 启动新版
                             let script = format!(
                                 "@echo off\r\n\
                                  timeout /t 2 /nobreak >nul\r\n\
-                                 move /Y \"{}\" \"{}\"\r\n\
-                                 start \"\" \"{}\"\r\n\
+                                 copy /Y \"{}\" \"{}\" >nul 2>&1\r\n\
+                                 if exist \"{}\" start \"\" \"{}\"\r\n\
                                  del \"%~f0\"\r\n",
-                                new_exe.display(), current_exe.display(), current_exe.display()
+                                new_exe.display(), current_exe.display(),
+                                current_exe.display(), current_exe.display()
                             );
                             let script_path = current_exe.with_file_name("forge-update.bat");
                             std::fs::write(&script_path, script).ok();
 
-                            // 启动脚本（独立进程），当前进程退出
                             let _ = std::process::Command::new("cmd")
                                 .args(["/C", &script_path.to_string_lossy()])
                                 .spawn();
@@ -194,21 +205,31 @@ async fn check_latest_version() -> Result<Option<String>, reqwest::Error> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
-    let resp = client
-        .get("https://gitee.com/api/v5/repos/forgemaster/forge-shell/tags?per_page=100")
-        .header("User-Agent", "ForgeShell-UpdateCheck")
-        .send()
-        .await?;
-    let json: serde_json::Value = resp.json().await?;
-    // Tags API 按名称排序，需要手动比较版本号取最大
-    let tag = json.as_array().and_then(|tags| {
-        tags.iter()
-            .filter_map(|t| t["name"].as_str().map(|s| s.trim_start_matches('v').to_string()))
-            .max_by(|a, b| {
-                let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
-                let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
-                a_parts.cmp(&b_parts)
-            })
+
+    // Gitee API 分页获取全部 tag（每页最多 100，超过需翻页）
+    let mut all_tags: Vec<String> = Vec::new();
+    for page in 1..=3 {
+        let url = format!(
+            "https://gitee.com/api/v5/repos/forgemaster/forge-shell/tags?per_page=100&page={}",
+            page
+        );
+        let resp = client.get(&url).header("User-Agent", "ForgeShell-UpdateCheck").send().await?;
+        let json: serde_json::Value = resp.json().await?;
+        if let Some(arr) = json.as_array() {
+            if arr.is_empty() { break; }
+            for t in arr {
+                if let Some(name) = t["name"].as_str() {
+                    all_tags.push(name.trim_start_matches('v').to_string());
+                }
+            }
+        } else { break; }
+    }
+
+    // semver 比较取最大版本号
+    let tag = all_tags.into_iter().max_by(|a, b| {
+        let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
+        let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
+        a_parts.cmp(&b_parts)
     });
     Ok(tag)
 }

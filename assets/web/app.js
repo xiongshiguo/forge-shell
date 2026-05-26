@@ -58,7 +58,7 @@ async function loadLatestSession() {
     if (d.ok && d.session && d.session.messages && d.session.messages.length) {
       var msgs = d.session.messages;
       for (var i = 0; i < msgs.length; i++) {
-        addMsg(msgs[i].role, msgs[i].content);
+        addMsg(msgs[i].role, msgs[i].content, true);
       }
       addMsg('system', '已恢复上次会话 (' + (d.session.date || '') + '，' + msgs.length + ' 条消息)');
       return true;
@@ -293,14 +293,15 @@ function updateToolStatus(tool, arg, success) {
 }
 
 // === 消息 ===
-function addMsg(role, text) {
+function addMsg(role, text, isHtml) {
   if (!text) return;
   var div = document.createElement('div');
   div.className = 'message ' + role;
   if (role === 'assistant') {
-    div.innerHTML = '<div class="msg-content">' + renderMarkdown(text) + '</div>';
+    // isHtml=true → 恢复会话（已渲染的HTML直接设）
+    div.innerHTML = '<div class="msg-content">' + (isHtml ? text : renderMarkdown(text)) + '</div>';
   } else {
-    div.textContent = text;
+    div.innerHTML = isHtml ? text : renderMarkdown(text);
   }
   document.getElementById('messages').appendChild(div);
   scrollDown();
@@ -416,14 +417,18 @@ async function clearErrorLogs() {
   refreshErrorLogs();
 }
 
-// === 自动保存会话（全量存储，无截断） ===
+// === 自动保存会话（保留Markdown格式） ===
 async function autoSaveSession() {
   var msgs = [];
   document.querySelectorAll('#messages .message').forEach(function(m) {
     var role = 'system';
     if (m.classList.contains('user')) role = 'user';
     else if (m.classList.contains('assistant')) role = 'assistant';
-    msgs.push({role: role, content: m.textContent || ''});
+    // 存 innerHTML 保留格式（Markdown已渲染为HTML）
+    // msg-content 是消息内容的实际容器
+    var contentEl = m.querySelector('.msg-content');
+    var content = contentEl ? contentEl.innerHTML : m.innerHTML;
+    msgs.push({role: role, content: content});
   });
   if (msgs.length === 0) return;
   var turns = msgs.filter(function(m) { return m.role === 'user'; }).length;
@@ -489,7 +494,11 @@ function restoreSession(id) {
   document.getElementById('messages').innerHTML = '';
   toolMsgIndex = {};
   found.messages.forEach(function(m) {
-    if (m.role && m.content) addMsg(m.role, m.content);
+    if (m.role && m.content) {
+      // 检测是否为已渲染的HTML（新格式）还是纯文本（旧格式）
+      var isHtml = m.content.trim().startsWith('<');
+      addMsg(m.role, m.content, isHtml);
+    }
   });
   addMsg('system', '已恢复会话 (' + (found.date||'') + '，' + found.messages.length + ' 条消息)');
   document.getElementById('sessions-panel').style.display = 'none';

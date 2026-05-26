@@ -2645,7 +2645,8 @@ pub async fn chat_handler(
                     if result.len() > 3000 {
                         result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], full_len);
                     }
-                    let summary = if result.len() > 100 { format!("{}…", &result[..100]) } else { result.clone() };
+                    let summary: String = result.chars().take(100).collect();
+                    let summary = if result.chars().count() > 100 { format!("{}…", summary) } else { result.clone() };
                     let _ = tx.send(Ok(Event::default().data(
                         serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
                     )));
@@ -2663,7 +2664,8 @@ pub async fn chat_handler(
                 if result.len() > 3000 {
                     result = format!("{}…\n[结果已截断，原始长度 {} 字符]", &result[..3000], full_len);
                 }
-                let summary = if result.len() > 100 { format!("{}…", &result[..100]) } else { result.clone() };
+                let summary: String = result.chars().take(100).collect();
+                let summary = if result.chars().count() > 100 { format!("{}…", summary) } else { result.clone() };
                 let _ = tx.send(Ok(Event::default().data(
                     serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
                 )));

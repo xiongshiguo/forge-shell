@@ -2674,7 +2674,7 @@ pub async fn chat_handler(
                         serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
                     )));
                     let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
+                        serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", result.chars().take(60).collect::<String>()) } else { result.clone() })}).to_string()
                     )));
                     tool_results.push((tool.clone(), result));
                 }
@@ -2693,7 +2693,7 @@ pub async fn chat_handler(
                     serde_json::json!({"type": "tool_result", "tool": tool, "arg": arg, "success": true, "summary": summary}).to_string()
                 )));
                 let _ = tx.send(Ok(Event::default().data(
-                    serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", &result[..60]) } else { result.clone() })}).to_string()
+                    serde_json::json!({"type": "chunk", "content": format!("  ✓ {} — {}\n", tool, if result.len() > 60 { format!("{}…", result.chars().take(60).collect::<String>()) } else { result.clone() })}).to_string()
                 )));
                 tool_results.push(((*tool).clone(), result));
             }

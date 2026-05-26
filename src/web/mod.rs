@@ -133,6 +133,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/session/latest", get(api::session_latest_handler))
         .route("/api/session/save", axum::routing::post(api::session_save_handler))
         .route("/api/sessions", get(api::sessions_list_handler))
+        .route("/api/session/delete", axum::routing::post(api::session_delete_handler))
         .route("/api/infer", axum::routing::post(api::infer_handler))
         .route("/api/structure", get(api::structure_handler))
         .route("/api/mcp", axum::routing::post(api::mcp_handler))

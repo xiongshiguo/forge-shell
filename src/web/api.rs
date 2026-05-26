@@ -1134,6 +1134,24 @@ pub async fn sessions_list_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "sessions": sessions.iter().take(10).collect::<Vec<_>>()}))
 }
 
+/// 删除单条会话记录
+pub async fn session_delete_handler(Json(req): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let id = req["id"].as_str().unwrap_or("");
+    if id.is_empty() { return Json(serde_json::json!({"ok": false})); }
+    let dir = crate::config::forge_data_dir().join("sessions");
+    // 尝试匹配文件名（session ID 只用了前8位）
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.contains(id) || fname.contains(&id[..id.len().min(8)]) {
+                std::fs::remove_file(entry.path()).ok();
+                break;
+            }
+        }
+    }
+    Json(serde_json::json!({"ok": true}))
+}
+
 /// 探索工具：自动扫描项目结构、文档、最近提交
 pub async fn explore_handler() -> Json<serde_json::Value> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));

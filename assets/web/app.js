@@ -468,13 +468,19 @@ async function loadSessionsList() {
         var preview = (s.preview || '').substring(0, 40);
         return '<div class="session-item" onclick="restoreSession(\'' + s.id + '\')">' +
           '<div class="session-item-preview">' + escapeHtml(preview || '(空)') + '</div>' +
-          '<div class="session-item-date">' + (s.date||'') + ' · ' + (s.turns||0) + '轮</div>' +
+          '<div class="session-item-date">' + (s.date||'') + ' · ' + (s.turns||0) + '轮' +
+          ' <span class="session-del" onclick="event.stopPropagation();deleteSession(\'' + s.id + '\')" title="删除">×</span></div>' +
           '</div>';
       }).join('');
     } else {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:12px">暂无历史</div>';
     }
   } catch(e) {}
+}
+
+async function deleteSession(id) {
+  await fetch('/api/session/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})});
+  loadSessionsList();
 }
 
 function restoreSession(id) {

@@ -93,6 +93,11 @@
       <div id="rp-project" class="rp-module">
         <div class="rp-card">
           <div class="rp-card-title">📊 项目监控</div>
+          <div class="rp-path-row">
+            <input id="rp-project-path" type="text" placeholder="项目路径…" onkeydown="if(event.key==='Enter')setProjectPath()">
+            <button onclick="setProjectPath()" title="切换">↻</button>
+            <button onclick="resetProjectPath()" title="恢复默认">⟲</button>
+          </div>
           <div id="rp-project-content">
             <div class="rp-stat"><span class="rp-label">项目</span><span class="rp-value">-</span></div>
             <div class="rp-stat"><span class="rp-label">文件数</span><span class="rp-value">-</span></div>

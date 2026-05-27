@@ -428,6 +428,39 @@ async function refreshRightPanel() {
   } catch(e) {}
 }
 
+// === 项目路径切换 ===
+async function setProjectPath() {
+  var inp = document.getElementById('rp-project-path');
+  var path = inp.value.trim();
+  if (!path) { alert('请输入项目路径'); return; }
+  try {
+    var r = await fetch('/api/set-project-path', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path:path})
+    });
+    var d = await r.json();
+    if (d.ok) {
+      refreshRightPanel();
+    } else {
+      alert(d.message || '切换失败');
+    }
+  } catch(e) { alert('请求失败: ' + e.message); }
+}
+
+async function resetProjectPath() {
+  try {
+    var r = await fetch('/api/set-project-path', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path:''})
+    });
+    var d = await r.json();
+    if (d.ok) {
+      document.getElementById('rp-project-path').value = '';
+      refreshRightPanel();
+    }
+  } catch(e) {}
+}
+
 // === 工具消息跟踪 ===
 var toolMsgIndex = {};
 

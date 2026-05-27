@@ -230,6 +230,32 @@ pub fn forge_data_dir() -> PathBuf {
         .join("forge-shell")
 }
 
+/// 匿名设备指纹：用于社区经验去重、成功率追踪，不包含可识别个人信息
+/// 生成自 hostname 的 hash，持久化到 data_dir，同设备重启不变
+pub fn device_fingerprint() -> String {
+    let fp_path = forge_data_dir().join("device_id");
+    // 如果已持久化，直接读取
+    if let Ok(existing) = std::fs::read_to_string(&fp_path) {
+        let trimmed = existing.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    // 生成新指纹：hostname hash + pid（防碰撞）
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string());
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    host.hash(&mut h);
+    std::process::id().hash(&mut h);
+    let fp = format!("fp_{:016x}", h.finish());
+    // 持久化
+    std::fs::create_dir_all(forge_data_dir()).ok();
+    let _ = std::fs::write(&fp_path, &fp);
+    fp
+}
+
 /// 配置文件路径
 pub fn forge_config_path() -> PathBuf {
     dirs::config_dir()

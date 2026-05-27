@@ -12,7 +12,7 @@ use crate::engine::tools::backup::BackupManager;
 use crate::evolution::EvolutionCoordinator;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use axum::{Router, routing::get};
+use axum::{Router, routing::{get, post}};
 use tower_http::cors::CorsLayer;
 
 /// 限流计数器
@@ -65,6 +65,8 @@ pub struct AppState {
     pub prompt_optimizer: Mutex<crate::engine::prompt_optimizer::PromptOptimizer>,
     pub rate_limiter: RateLimiter,
     pub error_logger: crate::error_log::ErrorLogger,
+    /// 用户手动设置的监控项目路径（优先于 current_dir）
+    pub project_path: Mutex<Option<String>>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -101,6 +103,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         ),
         prompt_optimizer: Mutex::new(crate::engine::prompt_optimizer::PromptOptimizer::new()),
+        project_path: Mutex::new(None),
         rate_limiter: RateLimiter::new(50),
         error_logger: crate::error_log::ErrorLogger::new(crate::config::forge_data_dir().join("logs")),
     });
@@ -111,6 +114,7 @@ pub async fn run_web(config: Config) -> anyhow::Result<()> {
         .route("/api/status", get(api::status_handler))
         .route("/api/cost", get(api::cost_handler))
         .route("/api/project", get(api::project_handler))
+        .route("/api/set-project-path", post(api::set_project_path_handler))
         .route("/api/setup", axum::routing::post(api::setup_handler))
         .route("/api/check-key", get(api::check_key_handler))
         .route("/api/ping", get(api::ping_handler))

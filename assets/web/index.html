@@ -22,50 +22,152 @@
   </div>
 </div>
 
-<!-- 主界面：单列对话流 -->
+<!-- 主界面：三栏布局 -->
 <div id="app" style="display:none">
+
+  <!-- 更新提示 -->
   <div id="update-banner" style="display:none">
     <span id="update-text"></span>
     <button id="update-btn" onclick="doUpdate()">立即更新</button>
   </div>
+
+  <!-- 顶部栏 -->
   <header id="topbar">
     <span class="logo">&#x1F525; 熔炉</span>
-    <div class="mode-selector">
-      <button class="mode-btn" data-mode="plan">规划</button>
-      <button class="mode-btn active" data-mode="assist">助手</button>
-      <button class="mode-btn" data-mode="speed">极速</button>
-    </div>
-    <select id="model-select" onchange="setModelPref(this.value)">
-      <option value="auto" selected>智能</option>
-      <option value="pro">Pro</option>
-      <option value="flash">Flash</option>
-      <option value="local">本地</option>
-    </select>
+    <span id="topbar-model" class="model-badge">自动</span>
     <div class="topbar-right">
-      <span id="sessions-toggle" onclick="toggleSessions()" title="会话历史">📋</span>
       <span id="topbar-cost">¥0.0000</span>
       <span id="topbar-version" class="version-badge">v0.21.0</span>
+      <span id="sessions-toggle" onclick="toggleLeftPanel()" title="历史会话">📋</span>
+      <span id="settings-toggle" onclick="toggleSettings()" title="设置">⚙️</span>
       <span id="err-count-badge" class="err-count-badge ok" onclick="toggleErrorPanel()">✓</span>
     </div>
   </header>
 
+  <!-- 三栏主体 -->
   <div id="main-area">
-    <aside id="sessions-panel">
-      <button id="new-session-btn" onclick="newSession()" style="width:100%;margin-bottom:10px;padding:8px;background:var(--purple);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-family:var(--font)">＋ 新建会话</button>
-      <div class="panel-hdr">📋 最近会话</div>
+
+    <!-- 左侧：历史对话 -->
+    <aside id="left-panel">
+      <div class="panel-header">
+        <span>历史对话</span>
+        <button id="new-session-btn" onclick="newSession()" title="新建会话">＋</button>
+      </div>
+      <div class="panel-search">
+        <input id="session-search" type="text" placeholder="搜索…" oninput="filterSessions()">
+      </div>
       <div id="sessions-list">加载中…</div>
     </aside>
+
+    <!-- 中间：对话区域 -->
     <section id="chat">
       <div id="messages"></div>
     </section>
+
+    <!-- 右侧：动态面板 -->
+    <aside id="right-panel">
+      <div class="panel-tabs" id="rp-tabs">
+        <button class="rp-tab active" data-panel="cost" title="费用">💰</button>
+        <button class="rp-tab" data-panel="project" title="项目">📊</button>
+        <button class="rp-tab" data-panel="thinking" title="思考">🧠</button>
+        <button class="rp-tab" data-panel="tools" title="工具">📋</button>
+      </div>
+
+      <!-- 费用看板 -->
+      <div id="rp-cost" class="rp-module active">
+        <div class="rp-card">
+          <div class="rp-card-title">💰 费用看板</div>
+          <div class="rp-stat"><span class="rp-label">模型</span><span id="rp-model-name" class="rp-value">-</span></div>
+          <div class="rp-stat"><span class="rp-label">本次会话</span><span id="rp-session-cost" class="rp-value">¥0.0000</span></div>
+          <div class="rp-stat"><span class="rp-label">本月累计</span><span id="rp-monthly-cost" class="rp-value">¥0.00</span></div>
+          <div class="rp-stat"><span class="rp-label">缓存命中</span><span id="rp-cache-hit" class="rp-value">-</span></div>
+          <div class="rp-stat"><span class="rp-label">节省金额</span><span id="rp-saved" class="rp-value">¥0.00</span></div>
+          <div class="rp-budget-bar">
+            <div class="rp-budget-fill" id="rp-budget-fill"></div>
+          </div>
+          <div class="rp-budget-label"><span>月度预算 ¥50</span><span id="rp-budget-pct">0%</span></div>
+        </div>
+      </div>
+
+      <!-- 项目监控 -->
+      <div id="rp-project" class="rp-module">
+        <div class="rp-card">
+          <div class="rp-card-title">📊 项目监控</div>
+          <div id="rp-project-content">
+            <div class="rp-stat"><span class="rp-label">项目</span><span class="rp-value">-</span></div>
+            <div class="rp-stat"><span class="rp-label">文件数</span><span class="rp-value">-</span></div>
+            <div class="rp-stat"><span class="rp-label">代码行</span><span class="rp-value">-</span></div>
+            <div class="rp-stat"><span class="rp-label">测试</span><span class="rp-value">-</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 思考过程 -->
+      <div id="rp-thinking" class="rp-module">
+        <div class="rp-card">
+          <div class="rp-card-title">🧠 思考过程</div>
+          <div id="rp-thinking-content">
+            <div class="rp-empty">等待任务…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 工具调用 -->
+      <div id="rp-tools" class="rp-module">
+        <div class="rp-card">
+          <div class="rp-card-title">📋 工具调用</div>
+          <div id="rp-tools-list">
+            <div class="rp-empty">等待执行…</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
   </div>
 
+  <!-- 底部栏 -->
   <footer id="bottombar">
+    <div class="mode-selector">
+      <button class="mode-btn active" data-mode="interactive" onclick="setMode('interactive')">💬 互动</button>
+      <button class="mode-btn" data-mode="quick" onclick="setMode('quick')">⚡ 速办</button>
+    </div>
     <div class="input-wrapper">
-      <input id="user-input" type="text" placeholder="输入指令… (Enter 发送)" autofocus>
+      <input id="user-input" type="text" placeholder="输入指令… (Enter 发送, Shift+Enter 换行)" autofocus>
       <button id="send-btn">发送</button>
     </div>
+    <span id="bottombar-cost">💰 ¥0.0000</span>
   </footer>
+</div>
+
+<!-- 设置面板 -->
+<div id="settings-modal" style="display:none">
+  <div class="settings-overlay" onclick="toggleSettings()"></div>
+  <div class="settings-card">
+    <div class="settings-header">
+      <h3>⚙️ 设置</h3>
+      <button onclick="toggleSettings()">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-section">
+        <h4>自动路由使用以下模型</h4>
+        <label class="settings-check"><input type="checkbox" id="set-flash" checked onchange="saveSettings()"> Flash（快，便宜）</label>
+        <label class="settings-check"><input type="checkbox" id="set-pro" checked onchange="saveSettings()"> Pro（深度推理）</label>
+        <label class="settings-check"><input type="checkbox" id="set-local" onchange="saveSettings()"> 本地模型（离线可用）<span class="set-hint">⚠️ 未检测到</span></label>
+        <p class="set-note">至少保留一个可用模型</p>
+      </div>
+      <div class="settings-section">
+        <h4>月度预算上限</h4>
+        <input id="set-budget" type="number" value="50" min="1" onchange="saveSettings()" style="width:80px;padding:4px 8px;background:rgba(0,0,0,0.3);color:var(--text);border:1px solid rgba(255,255,255,0.1);border-radius:4px;"> 元
+      </div>
+      <div class="settings-section">
+        <h4>UI 主题</h4>
+        <select id="set-theme" onchange="saveSettings()" style="padding:4px 8px;background:rgba(0,0,0,0.3);color:var(--text);border:1px solid rgba(255,255,255,0.1);border-radius:4px;">
+          <option value="purple">紫金（默认）</option>
+          <option value="dark">暗黑</option>
+        </select>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 错误日志面板（按需弹出） -->

@@ -100,7 +100,7 @@ impl Default for AiConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
-    /// 默认模式 (plan/assist/speed)
+    /// 默认模式 (interactive/quick)
     #[serde(default = "default_mode")]
     pub default_mode: String,
     /// 是否启用动画
@@ -112,7 +112,7 @@ pub struct UiConfig {
 }
 
 fn default_mode() -> String {
-    "assist".into()
+    "interactive".into()
 }
 fn default_true() -> bool {
     true

@@ -2169,7 +2169,7 @@ pub async fn chat_handler(
 
     tokio::spawn(async move {
         let msg_len = req.message.len();
-        let mode = req.mode.as_deref().unwrap_or("assist");
+        let mode = req.mode.as_deref().unwrap_or("interactive");
         tracing::info!("[chat] 收到消息 len={} mode={}", msg_len, mode);
 
         // 提前 clone 用于 panic 日志
@@ -2192,18 +2192,14 @@ pub async fn chat_handler(
             "local" => { decision.model = "ollama".into(); }
             _ => {} // auto: Router 自动决定
         }
-        // 模式覆盖：规划强制Pro，极速强制Flash（仅在 auto 模式下生效）
+        // 模式覆盖：速办强制Flash（仅在 auto 模式下生效）
         if model_pref == "auto" {
             match mode {
-                "plan" => {
-                    decision.model = config.ai.default_model.clone();
-                    decision.estimated_cost *= 1.5;
-                }
-                "speed" => {
+                "quick" => {
                     decision.model = config.ai.flash_model.clone();
                     decision.estimated_cost *= 0.3;
                 }
-                _ => {}
+                _ => {} // interactive: Router 自动决定
             }
         }
         config.ai.default_model = decision.model.clone();
@@ -2423,9 +2419,7 @@ pub async fn chat_handler(
         // 工具调用闭环：AI 输出 [TOOL:xxx] → 后端执行 → 结果回注 → 再调 AI
         // 规划模式禁用写工具（物理强制执行）
         let is_pro = decision.model.contains("pro");
-        let tool_defs = if mode == "plan" {
-            build_readonly_tools()
-        } else if is_pro {
+        let tool_defs = if is_pro {
             build_pro_tools() // Pro用10核心工具
         } else {
             // Flash: 根据意图关键词筛选工具（16→≤10），减少DeepSeek解析负担
@@ -2827,7 +2821,7 @@ pub async fn status_handler(
     let model = state.config.lock().await.ai.default_model.clone();
 
     Json(StatusResponse {
-        mode: "assist".into(),
+        mode: "interactive".into(),
         cost,
         hit_rate,
         active_agents: active,

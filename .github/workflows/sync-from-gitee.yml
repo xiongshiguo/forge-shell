@@ -10,8 +10,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 从 Gitee 克隆并强制推送到 GitHub
+        id: sync-push
         run: |
           git clone --bare https://forgemaster:${{ secrets.GITEE_TOKEN }}@gitee.com/forgemaster/forge-shell.git mirror
           cd mirror
           git remote add github https://xiongshiguo:${{ secrets.GH_TOKEN }}@github.com/xiongshiguo/forge-shell.git
-          git push --force github refs/heads/*:refs/heads/* refs/tags/*:refs/tags/*
+          git push --force github refs/heads/*:refs/heads/* refs/tags/*:refs/tags/* 2>&1 | tee push.log
+          # 检查是否有新 tag
+          if grep -q '\[new tag\]' push.log; then
+            echo "NEW_TAG=true" >> $GITHUB_OUTPUT
+            grep '\[new tag\]' push.log | head -1
+          fi
+
+      - name: 触发构建（有新 tag 时）
+        if: steps.sync-push.outputs.NEW_TAG == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: 'xiongshiguo',
+              repo: 'forge-shell',
+              workflow_id: 'build.yml',
+              ref: 'master'
+            });

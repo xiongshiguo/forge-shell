@@ -3,8 +3,15 @@ name: 构建与测试
 on:
   push:
     branches: [master, main]
+    tags: ['v*']
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '指定 tag 构建（留空则用最新）'
+        required: false
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
@@ -104,11 +111,15 @@ jobs:
   release:
     name: 发布 GitHub Release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     needs: [build-windows, build-linux, build-ohos]
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
       - name: 下载 Windows exe
         uses: actions/download-artifact@v4
         with:

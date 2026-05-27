@@ -69,6 +69,32 @@ impl ModelRouter {
         }
     }
 
+    /// 判断是否为大型文件创建任务（需要两阶段架构：Pro生成→Flash写入）
+    pub fn is_large_creation(&self, intent: &str) -> bool {
+        let char_count = intent.chars().count();
+        let intent_lower = intent.to_lowercase();
+
+        let creation_keywords = [
+            "html", "htm", "做一个", "写一个", "创建", "生成", "弄个",
+            "课表", "页面", "网站",
+        ];
+        if !creation_keywords.iter().any(|k| intent_lower.contains(k)) {
+            return false;
+        }
+
+        // 复杂度指标：这些词暗示文件内容量 > 500 行，Flash 单次输出容易截断/笔误
+        let complexity_indicators = [
+            "精美", "完整", "手机", "响应式", "多页面", "表格", "图表",
+            "css", "javascript", "交互", "动画", "切换", "按钮", "双周",
+            "单双周", "周一到周五", "早自习", "晚自习",
+        ];
+        let hints = complexity_indicators.iter().filter(|i| intent_lower.contains(*i)).count();
+        let has_multi_section = (intent_lower.contains("早") || intent_lower.contains("上午"))
+            && (intent_lower.contains("下午") || intent_lower.contains("晚"));
+
+        char_count > 120 || hints >= 3 || has_multi_section
+    }
+
     /// 根据意图做出路由决策
     pub fn decide(&self, intent: &str, context_tokens: usize) -> RoutingDecision {
         let complexity = self.estimate_complexity(intent, context_tokens);
@@ -135,13 +161,16 @@ impl ModelRouter {
             "分析", "调试", "优化", "修改", "实现", "集成",
             "测试", "部署", "配置", "重构",
         ];
-        // L4: 文件创建类任务直接Simple——防止过度思考耗尽token
+        // 文件创建任务：小文件→Simple/Flash，大文件→Complex/Pro两阶段
         let creation_keywords = [
             "html", "htm", "做一个", "写一个", "创建", "生成", "弄个",
             "课表", "页面", "网站",
         ];
         if creation_keywords.iter().any(|k| intent_lower.contains(k)) {
-            return Complexity::Simple;
+            if self.is_large_creation(intent) {
+                return Complexity::Complex; // 大文件 → Pro 两阶段架构
+            }
+            return Complexity::Simple; // 小文件 → Flash 直接 write
         }
 
         let simple_keywords = [

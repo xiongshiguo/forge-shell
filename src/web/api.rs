@@ -1616,6 +1616,13 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                     result.extend(&new_lines);
                     result.extend_from_slice(&lines[e..]);
                     let new_content = result.join("\n");
+                    // L3: 验证编辑实际生效（哈希不同 = 有改动，相同 = 未匹配到目标）
+                    use std::hash::{Hash, Hasher};
+                    let original_hash = { let mut h = std::collections::hash_map::DefaultHasher::new(); original.hash(&mut h); h.finish() };
+                    let new_hash = { let mut h = std::collections::hash_map::DefaultHasher::new(); new_content.hash(&mut h); h.finish() };
+                    if original_hash == new_hash {
+                        return format!("编辑未生效: 行{}-{}未能匹配到目标内容，文件未修改。请检查行号是否正确", s, e);
+                    }
                     // 生成 diff 摘要（前端可渲染）
                     let diff_summary: Vec<String> = old_lines.iter().map(|l| format!("-{}", l))
                         .chain(new_lines.iter().map(|l| format!("+{}", l)))
@@ -2210,6 +2217,103 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "meta", "model": decision.model, "mode": mode, "cost": decision.estimated_cost}).to_string()
         )));
+        // 两阶段架构：大型文件创建任务 → Pro生成代码 → 直接写入（跳过Flash消除审查修复螺旋）
+        if router.is_large_creation(&req.message) {
+            tracing::info!("[chat] 两阶段架构：大型文件创建任务 len={}", msg_len);
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": "📝 生成中…\n"}).to_string()
+            )));
+
+            // Phase 1: Pro 生成完整代码（无工具、启用思考、32K输出）
+            let gen_conv = vec![
+                crate::engine::inference::ChatMessage::system(&crate::system_prompt::get_generator_prompt()),
+                crate::engine::inference::ChatMessage::user(&format!("生成以下需求的完整代码：\n\n{}", req.message)),
+            ];
+
+            let mut pro_config = config.clone();
+            // L4: 零工具——物理上无法写/改/查文件
+            let gen_result: Result<String, String> = async {
+                let mut client = crate::engine::inference::InferenceClient::new(&pro_config)
+                    .map_err(|e| format!("Pro客户端: {}", e))?
+                    .with_max_tokens(32768u32)
+                    .with_thinking(true)
+                    .with_tools(Vec::new());
+
+                let stream = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    client.chat_stream(gen_conv),
+                ).await.map_err(|_| "Pro生成超时(120s)".to_string())?
+                .map_err(|e| format!("Pro调用失败: {}", e))?;
+
+                use futures::StreamExt;
+                let mut acc = String::new();
+                let mut s = stream;
+                while let Some(Ok(chunk)) = s.next().await {
+                    if !chunk.content.is_empty() { acc.push_str(&chunk.content); }
+                }
+                if acc.is_empty() { Err("Pro未返回任何内容".to_string()) }
+                else { Ok(acc) }
+            }.await;
+
+            let generated = match gen_result {
+                Ok(content) => content,
+                Err(e) => {
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "error", "message": format!("生成失败: {}", e)}).to_string()
+                    )));
+                    return;
+                }
+            };
+
+            // 流式输出生成内容给用户看
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": &generated}).to_string()
+            )));
+
+            // Phase 2: 直接写入文件（跳过模型——内容已由Pro生成，无需Flash再审查）
+            let (filename, file_content) = if let Some((first, rest)) = generated.split_once('\n') {
+                let fname = first.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '#' || c == ' ');
+                (if fname.is_empty() { "output.html" } else { fname }.to_string(), rest.to_string())
+            } else {
+                ("output.html".to_string(), generated.clone())
+            };
+
+            let work_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let file_path = work_dir.join(&filename);
+
+            match std::fs::write(&file_path, &file_content) {
+                Ok(()) => {
+                    let lines = file_content.lines().count();
+                    let bytes = file_content.len();
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "chunk", "content": format!("\n✅ 已写入 {} ({}行, {}B)\n", filename, lines, bytes)}).to_string()
+                    )));
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "done"}).to_string()
+                    )));
+                    // 自动保存会话
+                    let session_mgr = crate::engine::session::SessionManager::new(
+                        crate::config::forge_data_dir().join("sessions")
+                    );
+                    let turn_val = state_clone.session_turn.lock().await;
+                    let record = crate::engine::session::SessionRecord {
+                        date: chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+                        turn: *turn_val,
+                        messages: vec![
+                            crate::engine::session::SessionMessage { role: "user".into(), content: req.message.clone() },
+                            crate::engine::session::SessionMessage { role: "assistant".into(), content: format!("已写入 {} ({}行, {}B)", filename, lines, bytes) },
+                        ],
+                    };
+                    session_mgr.save_latest(&record);
+                }
+                Err(e) => {
+                    let _ = tx.send(Ok(Event::default().data(
+                        serde_json::json!({"type": "error", "message": format!("写入文件失败: {}", e)}).to_string()
+                    )));
+                }
+            }
+            return;
+        }
         // UCB1 提示词优化器：运行时选择最优变体
         let system_variant = match tokio::time::timeout(std::time::Duration::from_secs(5), state_clone.prompt_optimizer.lock()).await {
             Ok(g) => g.select_best(),

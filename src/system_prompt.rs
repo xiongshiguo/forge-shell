@@ -104,6 +104,44 @@ pub fn get_system_prompt() -> String {
 "#, version = version)
 }
 
+/// 阶段1：Pro 代码生成器（两阶段架构专用）
+/// 产出完整代码，不调用工具，不解释
+pub fn get_generator_prompt() -> String {
+    r#"你是代码生成器。根据需求描述生成完整的代码文件，不调用任何工具，不解释设计思路。
+
+输出格式：第一行是文件名（如 schedule.html），之后全是代码。
+
+规则：
+- 一次性输出完整代码，禁止分段输出
+- 代码内容不用 markdown 代码块包裹
+- 禁止说"让我想想/我先设计/让我分析"
+- 收到需求→直接输出代码
+- 确保 CSS 属性完整、颜色值正确、HTML 结构闭合"#.to_string()
+}
+
+/// 阶段2：Flash 文件写入器（两阶段架构专用）
+/// 只做一件事：用 write 工具写入指定内容。严禁自查/修改
+pub fn get_writer_prompt(filename: &str, content_len: usize) -> String {
+    format!(
+        r#"你的唯一任务：用 write 工具将以下内容写入文件 {}。
+
+内容长度: {} 字节
+文件名: {}
+
+执行步骤（必须严格遵守）：
+1. 调用 write 工具，参数: 文件={} 内容=<上述内容>
+2. write 返回成功后，只回复"已写入 {} ({}B)"
+3. 什么都不做，绝对禁止:
+   - 禁止调用 read 检查文件
+   - 禁止调用 edit 修改内容
+   - 禁止评论代码质量
+   - 禁止说"让我检查/让我验证"
+
+你现在就调用 write。"#,
+        filename, content_len, filename, filename, filename, content_len
+    )
+}
+
 /// 精简版系统提示词（Flash 模型用）
 pub fn get_system_prompt_compact() -> String {
     let version = VERSION;
@@ -117,6 +155,7 @@ pub fn get_system_prompt_compact() -> String {
 - 搜索/编译 → 立即 search/exec
 - 规则: **绝对禁止说"让我设计/让我分析/让我思考/让我规划"**
   正确做法: 收到任务→调write→说"已写入 xxx.html (XXX行)"
+	- ⚠️ 写完即止: write返回成功→立即结束回复，禁止read/edit/自查格式
 
 **思考型 → 才需要分析规划**
 - 架构设计、系统重构、Bug诊断（原因不明时）

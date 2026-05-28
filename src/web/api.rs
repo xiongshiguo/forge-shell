@@ -2369,44 +2369,76 @@ pub async fn chat_handler(
                 serde_json::json!({"type": "chunk", "content": "📝 生成骨架…\n"}).to_string()
             )));
 
-            // Phase 1: Pro 生成完整代码（无工具、启用思考、32K输出）
+            // Phase 1: Pro 生成（含重试逻辑——网络错误重试1次，空响应降级Flash）
             let gen_prompt = crate::system_prompt::get_generator_prompt_ext(&req.message);
+            let user_msg_text = format!("生成以下需求的完整代码：\n\n{}", req.message);
             let gen_conv = vec![
                 crate::engine::inference::ChatMessage::system(&gen_prompt),
-                crate::engine::inference::ChatMessage::user(&format!("生成以下需求的完整代码：\n\n{}", req.message)),
+                crate::engine::inference::ChatMessage::user(&user_msg_text),
             ];
 
             let mut pro_config = config.clone();
-            let gen_result: Result<String, String> = async {
-                let mut client = crate::engine::inference::InferenceClient::new(&pro_config)
-                    .map_err(|e| format!("Pro客户端: {}", e))?
-                    .with_max_tokens(32768u32)
-                    .with_thinking(true)
-                    .with_tools(Vec::new());
+            let mut retry_count = 0u32;
+            let max_retries = 1u32;
+            let mut last_error = String::new();
 
-                let stream = tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
-                    client.chat_stream(gen_conv),
-                ).await.map_err(|_| "Pro生成超时(120s)".to_string())?
-                .map_err(|e| format!("Pro调用失败: {}", e))?;
+            let generated = loop {
+                let conv = gen_conv.clone(); // 每次重试用干净上下文
+                let cfg = pro_config.clone();
+                let gen_result: Result<String, String> = async {
+                    let mut client = crate::engine::inference::InferenceClient::new(&cfg)
+                        .map_err(|e| format!("Pro客户端: {}", e))?
+                        .with_max_tokens(32768u32)
+                        .with_thinking(true)
+                        .with_tools(Vec::new());
 
-                use futures::StreamExt;
-                let mut acc = String::new();
-                let mut s = stream;
-                while let Some(Ok(chunk)) = s.next().await {
-                    if !chunk.content.is_empty() { acc.push_str(&chunk.content); }
-                }
-                if acc.is_empty() { Err("Pro未返回任何内容".to_string()) }
-                else { Ok(acc) }
-            }.await;
+                    let stream = tokio::time::timeout(
+                        std::time::Duration::from_secs(120),
+                        client.chat_stream(conv),
+                    ).await.map_err(|_| "TIMEOUT:Pro生成超时(120s)".to_string())?
+                    .map_err(|e| format!("NETWORK:{}", e))?;
 
-            let generated = match gen_result {
-                Ok(content) => content,
-                Err(e) => {
-                    let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "error", "message": format!("生成失败: {}", e)}).to_string()
-                    )));
-                    return;
+                    use futures::StreamExt;
+                    let mut acc = String::new();
+                    let mut s = stream;
+                    while let Some(Ok(chunk)) = s.next().await {
+                        if !chunk.content.is_empty() { acc.push_str(&chunk.content); }
+                    }
+                    if acc.is_empty() { Err("EMPTY:Pro未返回任何内容".to_string()) }
+                    else { Ok(acc) }
+                }.await;
+
+                match gen_result {
+                    Ok(content) => break content,
+                    Err(e) => {
+                        last_error = e.clone();
+                        let is_network = e.starts_with("NETWORK:");
+                        let is_timeout = e.starts_with("TIMEOUT:");
+                        let is_empty = e.starts_with("EMPTY:");
+
+                        if (is_network || is_timeout) && retry_count < max_retries {
+                            retry_count += 1;
+                            let msg = if is_timeout { "⏳ 超时，重试中…\n" } else { "🔌 网络波动，重试中…\n" };
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "chunk", "content": msg}).to_string()
+                            )));
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+
+                        if is_empty {
+                            // 空响应 → 降级Flash直接生成（跳过三阶段，用现有工具循环）
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "chunk", "content": "⚠️ Pro无响应，降级Flash直接生成…\n"}).to_string()
+                            )));
+                            // 退出三阶段，走下方正常chat流程
+                        } else {
+                            let _ = tx.send(Ok(Event::default().data(
+                                serde_json::json!({"type": "error", "message": format!("生成失败: {}", e)}).to_string()
+                            )));
+                        }
+                        return; // 所有重试耗尽或空响应，退出三阶段
+                    }
                 }
             };
 

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>高中课表 · 两周·单双周</title>
+<style>
+:root {
+  --bg: #f0f2f5; --card: #fff; --primary: #5b4ae0; --primary-light: #eeebff;
+  --text: #1a1a2e; --text2: #666; --border: #e8e8ef; --gold: #c9a96e;
+  --morning: #e8f4fd; --afternoon: #fef9e7; --night: #ede7f6; --early: #e6f7ec;
+  --shadow: 0 2px 12px rgba(0,0,0,.06); --radius: 12px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  display: flex; justify-content: center; padding: 10px;
+  -webkit-tap-highlight-color: transparent;
+}
+.container { width: 100%; max-width: 480px; }
+
+/* 头部 */
+.header {
+  background: linear-gradient(135deg, #5b4ae0, #7c3aed);
+  color: #fff; padding: 18px 20px; border-radius: var(--radius) var(--radius) 0 0;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.header h1 { font-size: 20px; font-weight: 700; }
+.header .week-badge {
+  background: rgba(255,255,255,.2); padding: 6px 14px; border-radius: 20px;
+  font-size: 14px; font-weight: 600;
+}
+
+/* 周切换 */
+.week-switch {
+  display: flex; gap: 8px; padding: 12px 16px; background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.week-btn {
+  flex: 1; padding: 10px; border-radius: 10px; border: 2px solid var(--border);
+  background: #f8f8fb; font-size: 14px; font-weight: 600; cursor: pointer;
+  text-align: center; transition: all .2s; color: var(--text2);
+}
+.week-btn.active {
+  background: var(--primary); color: #fff; border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(91,74,224,.3);
+}
+
+/* 日期标签 */
+.day-tabs {
+  display: flex; overflow-x: auto; padding: 10px 12px; gap: 6px;
+  background: var(--card); scrollbar-width: none;
+}
+.day-tabs::-webkit-scrollbar { display: none; }
+.day-tab {
+  flex: 0 0 auto; padding: 8px 14px; border-radius: 20px; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: 1.5px solid var(--border);
+  background: #f8f8fb; white-space: nowrap; transition: all .2s;
+}
+.day-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* 班级设置栏 */
+.class-bar {
+  display: flex; gap: 8px; align-items: center; padding: 10px 16px;
+  background: #fef9e7; border-bottom: 1px solid #f0e6c0; font-size: 13px;
+}
+.class-bar label { font-weight: 600; color: var(--gold); white-space: nowrap; }
+#classInput {
+  flex: 1; padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 8px;
+  font-size: 14px; outline: none; background: #fff;
+}
+#classInput:focus { border-color: var(--primary); }
+.class-bar button {
+  padding: 8px 16px; background: var(--primary); color: #fff; border: none;
+  border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+
+/* 课表 */
+.schedule { background: var(--card); border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+.period-group { padding: 4px 14px; }
+.period-group-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+  padding: 10px 4px 6px; color: var(--text2);
+}
+.period-group-label.early { color: #2d8a56; }
+.period-group-label.morning { color: #3b7ddd; }
+.period-group-label.afternoon { color: #d4a017; }
+.period-group-label.night { color: #7c3aed; }
+
+.period-row {
+  display: flex; align-items: center; padding: 8px 10px; margin: 3px 0;
+  border-radius: 10px; gap: 10px; cursor: pointer; transition: all .15s;
+  border: 2px solid transparent; min-height: 52px;
+}
+.period-row:active { transform: scale(.98); }
+.period-row.early-bg { background: var(--early); }
+.period-row.morning-bg { background: var(--morning); }
+.period-row.afternoon-bg { background: var(--afternoon); }
+.period-row.night-bg { background: var(--night); }
+
+.period-num {
+  width: 28px; height: 28px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: 12px;
+  font-weight: 700; flex-shrink: 0;
+}
+.early-bg .period-num { background: #c8e6d0; color: #1b6e3a; }
+.morning-bg .period-num { background: #d4e2fc; color: #2b5fc3; }
+.afternoon-bg .period-num { background: #fef0c0; color: #92600a; }
+.night-bg .period-num { background: #e0d4f7; color: #5b21b6; }
+
+.period-time { font-size: 11px; color: var(--text2); width: 52px; flex-shrink: 0; text-align: center; }
+.period-info { flex: 1; min-width: 0; }
+.period-subject {
+  font-size: 14px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.period-class {
+  font-size: 11px; color: var(--text2); margin-top: 1px;
+}
+.period-action {
+  font-size: 11px; color: var(--primary); font-weight: 600;
+  padding: 4px 10px; border-radius: 12px; background: var(--primary-light);
+  white-space: nowrap; flex-shrink: 0;
+}
+.period-row.filled .period-action { display: none; }
+
+/* 弹窗 */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,.4); z-index: 100; display: flex;
+  align-items: flex-end; justify-content: center;
+}
+.modal-sheet {
+  width: 100%; max-width: 480px; background: #fff; border-radius: 20px 20px 0 0;
+  padding: 20px 16px 32px; animation: slideUp .25s ease;
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.modal-sheet h3 { font-size: 17px; margin-bottom: 14px; color: var(--text); }
+.modal-sheet input {
+  width: 100%; padding: 12px; border: 2px solid var(--border); border-radius: 10px;
+  font-size: 15px; margin-bottom: 10px; outline: none;
+}
+.modal-sheet input:focus { border-color: var(--primary); }
+.modal-sheet .btn-row { display: flex; gap: 10px; margin-top: 14px; }
+.modal-sheet button {
+  flex: 1; padding: 12px; border-radius: 10px; font-size: 15px;
+  font-weight: 600; cursor: pointer; border: none;
+}
+.btn-save { background: var(--primary); color: #fff; }
+.btn-clear { background: #fee2e2; color: #dc2626; }
+.btn-cancel { background: #f1f5f9; color: var(--text2); }
+
+/* 空状态 */
+.empty-hint { text-align: center; padding: 40px 20px; color: #ccc; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>📚 高中课表</h1>
+    <div class="week-badge" id="weekBadge">单周</div>
+  </div>
+
+  <div class="week-switch" id="weekSwitch">
+    <div class="week-btn active" data-week="odd">📅 单周</div>
+    <div class="week-btn" data-week="even">📅 双周</div>
+  </div>
+
+  <div class="class-bar">
+    <label>🏫</label>
+    <input type="text" id="classInput" placeholder="设置班级，如：高三(1)班" autocomplete="off">
+    <button onclick="saveClass()">确定</button>
+  </div>
+
+  <div class="day-tabs" id="dayTabs"></div>
+
+  <div class="schedule" id="schedule"></div>
+</div>
+
+<div class="modal-overlay" id="modal" style="display:none">
+  <div class="modal-sheet">
+    <h3 id="modalTitle">编辑课程</h3>
+    <input type="text" id="modalSubject" placeholder="科目名称，如：语文">
+    <input type="text" id="modalClass" placeholder="班级（自动填入默认班级）">
+    <div class="btn-row">
+      <button class="btn-clear" onclick="clearSlot()">清空</button>
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-save" onclick="saveSlot()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// 时间段定义：早自习1 + 上午4 + 下午4 + 晚自习4 = 13节
+var periods = [
+  { id:0,  label:'早自习', cls:'early-bg', time:'06:30-07:20', group:'early',    groupLabel:'🌅 早自习' },
+  { id:1,  label:'第1节',  cls:'morning-bg', time:'08:00-08:45', group:'morning',  groupLabel:'☀️ 上午' },
+  { id:2,  label:'第2节',  cls:'morning-bg', time:'08:55-09:40', group:'morning',  groupLabel:'' },
+  { id:3,  label:'第3节',  cls:'morning-bg', time:'10:00-10:45', group:'morning',  groupLabel:'' },
+  { id:4,  label:'第4节',  cls:'morning-bg', time:'10:55-11:40', group:'morning',  groupLabel:'' },
+  { id:5,  label:'第5节',  cls:'afternoon-bg', time:'14:00-14:45', group:'afternoon', groupLabel:'☀️ 下午' },
+  { id:6,  label:'第6节',  cls:'afternoon-bg', time:'14:55-15:40', group:'afternoon', groupLabel:'' },
+  { id:7,  label:'第7节',  cls:'afternoon-bg', time:'16:00-16:45', group:'afternoon', groupLabel:'' },
+  { id:8,  label:'第8节',  cls:'afternoon-bg', time:'16:55-17:40', group:'afternoon', groupLabel:'' },
+  { id:9,  label:'晚自习1', cls:'night-bg', time:'18:30-19:20', group:'night',    groupLabel:'🌙 晚自习' },
+  { id:10, label:'晚自习2', cls:'night-bg', time:'19:30-20:20', group:'night',    groupLabel:'' },
+  { id:11, label:'晚自习3', cls:'night-bg', time:'20:30-21:20', group:'night',    groupLabel:'' },
+  { id:12, label:'晚自习4', cls:'night-bg', time:'21:30-22:20', group:'night',    groupLabel:'' }
+];
+
+var dayNames = ['周一','周二','周三','周四','周五','周六','周日'];
+var currentWeek = 'odd';  // odd | even
+var currentDay = 0;       // 0-6
+var currentClass = '';
+var editingPeriod = null;
+var editingDay = null;
+
+// 数据：schedule[week][day][periodId] = { subject, className }
+var schedule = { odd: {}, even: {} };
+for (var w of ['odd','even']) {
+  for (var d = 0; d < 7; d++) {
+    schedule[w][d] = {};
+  }
+}
+
+// 从 localStorage 加载
+function loadData() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('schedule_data'));
+    if (saved) { schedule = saved; }
+    currentClass = localStorage.getItem('schedule_class') || '';
+  } catch(e) {}
+}
+function saveData() {
+  localStorage.setItem('schedule_data', JSON.stringify(schedule));
+  localStorage.setItem('schedule_class', currentClass);
+}
+
+function saveClass() {
+  currentClass = document.getElementById('classInput').value.trim();
+  saveData();
+  render();
+}
+
+// 渲染日标签
+function renderDayTabs() {
+  var html = '';
+  for (var i = 0; i < 7; i++) {
+    html += '<div class="day-tab' + (i === currentDay ? ' active' : '') + '" onclick="switchDay(' + i + ')">' + dayNames[i] + '</div>';
+  }
+  document.getElementById('dayTabs').innerHTML = html;
+}
+
+// 渲染课表
+function render() {
+  renderDayTabs();
+  document.getElementById('classInput').value = currentClass;
+  document.getElementById('weekBadge').textContent = currentWeek === 'odd' ? '单周' : '双周';
+
+  var html = '';
+  var lastGroup = '';
+  var dayData = schedule[currentWeek][currentDay];
+
+  for (var i = 0; i < periods.length; i++) {
+    var p = periods[i];
+    if (p.groupLabel) {
+      html += '<div class="period-group-label ' + p.group + '">' + p.groupLabel + '</div>';
+    }
+    var slot = dayData[p.id];
+    var subject = slot ? slot.subject : '';
+    var cls = slot ? slot.className : '';
+    var filled = !!subject;
+
+    html += '<div class="period-row ' + p.cls + (filled ? ' filled' : '') + '" onclick="openModal(' + p.id + ')">';
+    html += '<div class="period-num">' + (p.id + 1) + '</div>';
+    html += '<div class="period-time">' + p.time + '</div>';
+    html += '<div class="period-info">';
+    html += '<div class="period-subject">' + (subject || '点击设置') + '</div>';
+    if (cls) html += '<div class="period-class">' + cls + '</div>';
+    html += '</div>';
+    if (!filled) html += '<div class="period-action">+ 设课</div>';
+    html += '</div>';
+  }
+  document.getElementById('schedule').innerHTML = html || '<div class="empty-hint">加载中…</div>';
+}
+
+function switchDay(day) {
+  currentDay = day;
+  render();
+}
+
+function switchWeek(week) {
+  currentWeek = week;
+  document.querySelectorAll('.week-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.week === week);
+  });
+  render();
+}
+
+function openModal(periodId) {
+  editingPeriod = periodId;
+  editingDay = currentDay;
+  var slot = schedule[currentWeek][currentDay][periodId] || {};
+  document.getElementById('modalTitle').textContent = periods[periodId].label + ' ' + periods[periodId].time;
+  document.getElementById('modalSubject').value = slot.subject || '';
+  document.getElementById('modalClass').value = slot.className || currentClass || '';
+  document.getElementById('modal').style.display = 'flex';
+  document.getElementById('modalSubject').focus();
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  editingPeriod = null;
+}
+
+function saveSlot() {
+  if (editingPeriod === null) return;
+  var subject = document.getElementById('modalSubject').value.trim();
+  var cls = document.getElementById('modalClass').value.trim() || currentClass;
+  if (subject) {
+    schedule[currentWeek][editingDay][editingPeriod] = { subject: subject, className: cls };
+  } else {
+    delete schedule[currentWeek][editingDay][editingPeriod];
+  }
+  saveData();
+  closeModal();
+  render();
+}
+
+function clearSlot() {
+  if (editingPeriod === null) return;
+  delete schedule[currentWeek][editingDay][editingPeriod];
+  saveData();
+  closeModal();
+  render();
+}
+
+// 初始化
+loadData();
+document.getElementById('classInput').value = currentClass;
+renderDayTabs();
+render();
+
+document.querySelectorAll('.week-btn').forEach(function(b) {
+  b.addEventListener('click', function() { switchWeek(b.dataset.week); });
+});
+document.getElementById('modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+</script>
+</body>
+</html>

@@ -31,7 +31,9 @@ fn main() {
     )
     .expect("failed to write version.rs");
 
-    // 不设 rerun-if-changed：git describe 极其轻量，每次构建都重新检测
+    // 当 .git/HEAD 变更（新提交/tag）时重跑 build.rs，确保版本号始终正确
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    // 源文件哈希变更也会触发重编译（通过 version.rs 内容不同）
 }
 
 /// 遍历 src/ 目录，收集所有 .rs 文件的路径和大小，计算确定性哈希

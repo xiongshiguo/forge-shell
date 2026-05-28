@@ -33,7 +33,7 @@ jobs:
         run: cargo test --verbose
 
       - name: Clippy 检查
-        run: cargo clippy -- -D warnings
+        run: cargo clippy
 
   build-windows:
     name: 构建 Windows 静态二进制

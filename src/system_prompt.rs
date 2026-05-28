@@ -107,16 +107,43 @@ pub fn get_system_prompt() -> String {
 /// 阶段1：Pro 代码生成器（两阶段架构专用）
 /// 产出完整代码，不调用工具，不解释
 pub fn get_generator_prompt() -> String {
-    r#"你是代码生成器。根据需求描述生成完整的代码文件，不调用任何工具，不解释设计思路。
+    get_generator_prompt_ext("")
+}
+
+/// 增强版生成器：根据任务类型注入精确质量约束
+pub fn get_generator_prompt_ext(intent: &str) -> String {
+    let base = r#"你是 Claude Code 级别的代码生成器。根据需求生成完整代码文件，不调用任何工具。
 
 输出格式：第一行是文件名（如 schedule.html），之后全是代码。
 
-规则：
-- 一次性输出完整代码，禁止分段输出
-- 代码内容不用 markdown 代码块包裹
-- 禁止说"让我想想/我先设计/让我分析"
-- 收到需求→直接输出代码
-- 确保 CSS 属性完整、颜色值正确、HTML 结构闭合"#.to_string()
+核心规则：
+- 所有 HTML 标签必须闭合，属性值用双引号包裹
+- 所有 CSS 属性必须是 "property: value;" 格式，冒号分号不能省略
+- 所有 JS 语法必须正确：键值对用冒号，字符串用引号，括号配对
+- 禁止在 CSS 属性之间插入多余空格代替分号（如 "border-radius 50%" 是错误的）
+- 代码不用 markdown 代码块包裹
+- 一次性输出，禁止解释
+
+输出质量标准（Claude Code 同级）：
+- 每个 CSS 声明独立一行，以分号结尾
+- JS 对象字面量用正确的 key: value 语法
+- 不产生语法截断、属性缺失、括号不匹配
+- 颜色值必须完整（#fff 等简写可用，但不能截断成 #f0 等）"#;
+
+    let intent_lower = intent.to_lowercase();
+    let mut extras = String::new();
+
+    if intent_lower.contains("html") || intent_lower.contains("htm") || intent_lower.contains("页面") || intent_lower.contains("课表") {
+        extras.push_str("\n\nHTML 专项约束：\n- CSS 变量定义: 每个变量独占一行，格式 --name: value;\n- 所有 CSS 规则以大括号 {} 包裹，左括号紧跟选择器\n- @media 查询内容缩进正确，每个属性以分号结尾\n- JS 中字符串必须用引号包裹（单引号或双引号），模板字符串用反引号\n- JSON 对象语法: \"key\": value, 末尾项不能有逗号\n- HTML 标签正确嵌套，不能交叉闭合\n- 确保在移动端 viewport 下正常显示（width=device-width）");
+    }
+    if intent_lower.contains("json") || intent_lower.contains("配置") || intent_lower.contains("config") {
+        extras.push_str("\n\nJSON 专项约束：\n- 必须是合法的 JSON（可被 JSON.parse 解析）\n- 键名用双引号\n- 字符串值用双引号，数字/布尔不加引号\n- 数组/对象末尾不能有逗号");
+    }
+    if intent_lower.contains("markdown") || intent_lower.contains(".md") || intent_lower.contains("readme") {
+        extras.push_str("\n\nMarkdown 专项约束：\n- 标题 # 后必须有空格\n- 代码块用 ``` 包裹，语言标记可选但代码块必须闭合\n- 表格对齐线完整");
+    }
+
+    format!("{}{}", base, extras)
 }
 
 /// 阶段2：Flash 文件写入器（两阶段架构专用）

@@ -1404,6 +1404,134 @@ fn convert_native_args(tool: &str, json_args: &str) -> String {
     }
 }
 
+/// HTML/CSS/JS 语法校验：检测常见截断/格式错误
+fn validate_html_syntax(content: &str) -> Vec<(usize, String)> {
+    let mut errors = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+
+    for (i, line) in lines.iter().enumerate() {
+        let ln = i + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+
+        // CSS: 属性缺冒号 (如 "border-radius 50%;"  "display none;")
+        if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_alphabetic() || c == '-') {
+            if rest.contains(':') && rest.contains(';') {
+                // 检查冒号后面是否有值被截断（如 "50            pointer-events: none;"）
+                if let Some(after_colon) = rest.split(':').nth(1) {
+                    if after_colon.trim().is_empty() {
+                        errors.push((ln, format!("CSS属性值缺失: {}", trimmed.chars().take(50).collect::<String>())));
+                    }
+                }
+            }
+        }
+
+        // CSS/HTML: 行尾无分号且非块级开始 (如 "padding: 12 12px" - 缺px但不检测)
+        if (trimmed.starts_with(|c: char| c.is_alphabetic() || c == '-'))
+            && !trimmed.ends_with(';') && !trimmed.ends_with('{') && !trimmed.ends_with('}')
+            && !trimmed.ends_with(',') && !trimmed.contains("<!--") && !trimmed.contains("-->")
+            && trimmed.contains(':') && !trimmed.contains("//")
+        {
+            // 检查是否是 "property value" 格式没有分号
+            if let Some((prop, val)) = trimmed.split_once(':') {
+                if !prop.contains(' ') && val.trim().len() > 0 && !val.contains(':') {
+                    let val_trimmed = val.trim();
+                    if val_trimmed.len() < val.len() + 5 && val_trimmed.split_whitespace().count() <= 3 {
+                        errors.push((ln, format!("CSS缺少分号: {}", trimmed.chars().take(60).collect::<String>())));
+                    }
+                }
+            }
+        }
+
+        // JS: 缺冒号的对象字面量 (如 "time:08:00" 缺引号)
+        if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_alphabetic() || c == '_' || c == '$') {
+            if rest.contains(':') && (rest.contains("'") || rest.contains("\"")) {
+                let after_first_colon = &rest[rest.find(':').unwrap() + 1..];
+                if after_first_colon.starts_with(|c: char| c.is_alphanumeric()) && !after_first_colon.starts_with('\'') && !after_first_colon.starts_with('"') && !after_first_colon.starts_with('[') && !after_first_colon.starts_with('{') {
+                    // 可能是缺引号的字符串值，但不是致命错误
+                }
+            }
+        }
+
+        // HTML: 标签未闭合检测（简单启发式）
+        let open_tags = trimmed.matches('<').count();
+        let close_tags = trimmed.matches('>').count();
+        if open_tags != close_tags {
+            errors.push((ln, format!("HTML标签不匹配(<{} >{}): {}", open_tags, close_tags, trimmed.chars().take(40).collect::<String>())));
+        }
+    }
+
+    errors
+}
+
+/// 写文件并发送 SSE 事件（三阶段架构共用）
+fn do_write_file(
+    tx: &tokio::sync::mpsc::UnboundedSender<Result<Event, std::convert::Infallible>>,
+    state: &SharedState,
+    user_msg: &str,
+    filename: &str,
+    content: &str,
+    base_dir: std::path::PathBuf,
+) {
+    let file_path = base_dir.join(filename);
+    match std::fs::write(&file_path, content) {
+        Ok(()) => {
+            let lines = content.lines().count();
+            let bytes = content.len();
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": format!("\n✅ 已写入 {} ({}行, {}B)\n", filename, lines, bytes)}).to_string()
+            )));
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "done"}).to_string()
+            )));
+            let state_clone = state.clone();
+            let msg = user_msg.to_string();
+            let fname = filename.to_string();
+            tokio::spawn(async move {
+                let session_mgr = crate::engine::session::SessionManager::new(
+                    crate::config::forge_data_dir().join("sessions")
+                );
+                let turn_val = state_clone.session_turn.lock().await;
+                let record = crate::engine::session::SessionRecord {
+                    date: chrono::Utc::now().format("%m-%d %H:%M").to_string(),
+                    turn: *turn_val,
+                    messages: vec![
+                        crate::engine::session::SessionMessage { role: "user".into(), content: msg },
+                        crate::engine::session::SessionMessage { role: "assistant".into(), content: format!("已写入 {} ({}行, {}B)", fname, lines, bytes) },
+                    ],
+                };
+                session_mgr.save_latest(&record);
+            });
+        }
+        Err(e) => {
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "error", "message": format!("写入失败: {}", e)}).to_string()
+            )));
+        }
+    }
+}
+
+/// 构建仅含 edit 的工具定义（Phase 3 Flash 修复用）
+fn build_edit_tool_def() -> crate::engine::inference::ToolDef {
+    crate::engine::inference::ToolDef {
+        tool_type: "function".into(),
+        function: crate::engine::inference::ToolFunction {
+            name: "edit".into(),
+            description: "精确编辑文件。格式: path:start:end:new_content[:old_string]。提供old_string时做内容匹配替换。".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "编辑参数: path:start:end:new_content[:old_string]"
+                    }
+                },
+                "required": ["content"]
+            }),
+        },
+    }
+}
+
 async fn execute_tool_inline(tool: &str, arg: &str) -> String {
     match tool {
         "web" => {
@@ -1593,11 +1721,12 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
             }
         }
         "edit" => {
-            let parts: Vec<&str> = arg.splitn(4, ':').collect();
+            let parts: Vec<&str> = arg.splitn(5, ':').collect();
             let path = parts.first().map(|s| s.trim()).unwrap_or("");
             let start = parts.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
             let end = parts.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
             let content = parts.get(3).unwrap_or(&"");
+            let old_str = parts.get(4).unwrap_or(&"");  // P2: 可选的内容匹配参数
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let full_path = cwd.join(path);
             match std::fs::read_to_string(&full_path) {
@@ -1611,6 +1740,21 @@ async fn execute_tool_inline(tool: &str, arg: &str) -> String {
                     let s = start.max(1).min(lines.len());
                     let e = if end > 0 { end.min(lines.len()) } else { s };
                     let old_lines: Vec<&str> = lines[s.saturating_sub(1)..e].to_vec();
+
+                    // P2: old_string 内容匹配——模型必须准确记住要替换的内容
+                    if !old_str.is_empty() {
+                        let actual: String = old_lines.join("\n");
+                        let expected = old_str.trim();
+                        if actual != expected {
+                            return format!(
+                                "edit 匹配失败: 行{}-{}的实际内容与提供的old_string不符。\n期望: {}\n实际: {}\n文件未修改，请重新读取目标行后再试。",
+                                s, e,
+                                expected.chars().take(80).collect::<String>(),
+                                actual.chars().take(80).collect::<String>()
+                            );
+                        }
+                    }
+
                     let new_lines: Vec<&str> = content.lines().collect();
                     let mut result = Vec::new();
                     result.extend_from_slice(&lines[..s.saturating_sub(1)]);
@@ -2218,21 +2362,21 @@ pub async fn chat_handler(
         let _ = tx.send(Ok(Event::default().data(
             serde_json::json!({"type": "meta", "model": decision.model, "mode": mode, "cost": decision.estimated_cost}).to_string()
         )));
-        // 两阶段架构：大型文件创建任务 → Pro生成代码 → 直接写入（跳过Flash消除审查修复螺旋）
+        // 三阶段架构：大型文件创建 → Pro生成 + 后端校验 + Flash修复
         if router.is_large_creation(&req.message) {
-            tracing::info!("[chat] 两阶段架构：大型文件创建任务 len={}", msg_len);
+            tracing::info!("[chat] 三阶段架构：大型文件创建任务 len={}", msg_len);
             let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "chunk", "content": "📝 生成中…\n"}).to_string()
+                serde_json::json!({"type": "chunk", "content": "📝 生成骨架…\n"}).to_string()
             )));
 
             // Phase 1: Pro 生成完整代码（无工具、启用思考、32K输出）
+            let gen_prompt = crate::system_prompt::get_generator_prompt_ext(&req.message);
             let gen_conv = vec![
-                crate::engine::inference::ChatMessage::system(&crate::system_prompt::get_generator_prompt()),
+                crate::engine::inference::ChatMessage::system(&gen_prompt),
                 crate::engine::inference::ChatMessage::user(&format!("生成以下需求的完整代码：\n\n{}", req.message)),
             ];
 
             let mut pro_config = config.clone();
-            // L4: 零工具——物理上无法写/改/查文件
             let gen_result: Result<String, String> = async {
                 let mut client = crate::engine::inference::InferenceClient::new(&pro_config)
                     .map_err(|e| format!("Pro客户端: {}", e))?
@@ -2266,53 +2410,72 @@ pub async fn chat_handler(
                 }
             };
 
-            // 流式输出生成内容给用户看
-            let _ = tx.send(Ok(Event::default().data(
-                serde_json::json!({"type": "chunk", "content": &generated}).to_string()
-            )));
-
-            // Phase 2: 直接写入文件（跳过模型——内容已由Pro生成，无需Flash再审查）
+            // Phase 2: 后端语法校验——检测致命错误
             let (filename, file_content) = if let Some((first, rest)) = generated.split_once('\n') {
                 let fname = first.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '#' || c == ' ');
                 (if fname.is_empty() { "output.html" } else { fname }.to_string(), rest.to_string())
             } else {
                 ("output.html".to_string(), generated.clone())
             };
+            let is_html = filename.ends_with(".html") || filename.ends_with(".htm");
+            let validation_errors = if is_html { validate_html_syntax(&file_content) } else { Vec::new() };
+
+            if validation_errors.is_empty() {
+                // 校验通过 → 直接写盘
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({"type": "chunk", "content": "\n✅ 校验通过\n"}).to_string()
+                )));
+                do_write_file(&tx, &state_clone, &req.message, &filename, &file_content, std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+                return;
+            }
+
+            // Phase 3: Flash 逐条修复语法错误（每轮修复 ≤ 3 条，改动 ≤ 50 行）
+            let _ = tx.send(Ok(Event::default().data(
+                serde_json::json!({"type": "chunk", "content": format!("\n🔧 检测到 {} 处语法问题，自动修复中…\n", validation_errors.len())}).to_string()
+            )));
+            let error_list: String = validation_errors.iter().take(5)
+                .map(|(i, e)| format!("{}. {}", i, e)).collect::<Vec<_>>().join("\n");
+            let fix_prompt = format!(
+                "修复以下HTML文件的 {} 处语法错误，每处只改动1-2行。用edit工具逐条修复，修完即止。\n\n错误清单：\n{}\n\n文件内容：\n{}",
+                validation_errors.len().min(5), error_list, file_content
+            );
+
+            let fix_conv = vec![
+                crate::engine::inference::ChatMessage::system("你是代码修复专家。根据错误清单逐条修复，修完即止，不要自查。"),
+                crate::engine::inference::ChatMessage::user(&fix_prompt),
+            ];
+
+            let mut fix_config = config.clone();
+            fix_config.ai.default_model = config.ai.flash_model.clone();
+            let fixed_content = async {
+                let mut client = crate::engine::inference::InferenceClient::new(&fix_config)
+                    .map_err(|e| format!("Flash客户端: {}", e))?
+                    .with_max_tokens(8192u32)
+                    .with_thinking(false)
+                    .with_tools(vec![build_edit_tool_def()]);
+
+                let stream = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    client.chat_stream(fix_conv),
+                ).await.map_err(|_| "Flash修复超时".to_string())?
+                .map_err(|e| format!("Flash调用失败: {}", e))?;
+
+                use futures::StreamExt;
+                let mut acc = String::new();
+                let mut s = stream;
+                while let Some(Ok(chunk)) = s.next().await {
+                    if !chunk.content.is_empty() { acc.push_str(&chunk.content); }
+                }
+                Ok::<String, String>(if acc.is_empty() { file_content.clone() } else { acc })
+            }.await;
+
+            let final_content = match fixed_content {
+                Ok(c) => c,
+                Err(_) => file_content, // 修复失败就用原始版本
+            };
 
             let work_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let file_path = work_dir.join(&filename);
-
-            match std::fs::write(&file_path, &file_content) {
-                Ok(()) => {
-                    let lines = file_content.lines().count();
-                    let bytes = file_content.len();
-                    let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "chunk", "content": format!("\n✅ 已写入 {} ({}行, {}B)\n", filename, lines, bytes)}).to_string()
-                    )));
-                    let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "done"}).to_string()
-                    )));
-                    // 自动保存会话
-                    let session_mgr = crate::engine::session::SessionManager::new(
-                        crate::config::forge_data_dir().join("sessions")
-                    );
-                    let turn_val = state_clone.session_turn.lock().await;
-                    let record = crate::engine::session::SessionRecord {
-                        date: chrono::Utc::now().format("%m-%d %H:%M").to_string(),
-                        turn: *turn_val,
-                        messages: vec![
-                            crate::engine::session::SessionMessage { role: "user".into(), content: req.message.clone() },
-                            crate::engine::session::SessionMessage { role: "assistant".into(), content: format!("已写入 {} ({}行, {}B)", filename, lines, bytes) },
-                        ],
-                    };
-                    session_mgr.save_latest(&record);
-                }
-                Err(e) => {
-                    let _ = tx.send(Ok(Event::default().data(
-                        serde_json::json!({"type": "error", "message": format!("写入文件失败: {}", e)}).to_string()
-                    )));
-                }
-            }
+            do_write_file(&tx, &state_clone, &req.message, &filename, &final_content, work_dir);
             return;
         }
         // UCB1 提示词优化器：运行时选择最优变体

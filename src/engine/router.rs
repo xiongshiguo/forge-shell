@@ -1,4 +1,4 @@
-//! 模型路由器：智能选择最优模型以控制成本
+//! 模型路由器：智能选择最优模型以控制成本（L5 源文件哈希验证）
 //!
 //! 策略：
 //! - 简单任务（代码补全、格式化、简单问答） → Flash 模型（成本仅 Pro 的 10%）
@@ -307,6 +307,21 @@ mod tests {
         let router = ModelRouter::default();
         let decision = router.decide("怎么使用 git status", 0);
         assert_eq!(decision.complexity, Complexity::Simple);
+    }
+
+    #[test]
+    fn test_schedule_task_is_large_creation() {
+        let router = ModelRouter::default();
+        let task = "帮高中老师制作一个连续两周14天的课表能单双周切换，早自习1节、上午下午晚自习各4节，能设置班级方便哪节课直接选填，手机html格式显示，界面要精美";
+        assert!(router.is_large_creation(task), "课表任务应该被识别为大型文件创建");
+        assert_eq!(router.estimate_complexity(task, 0), Complexity::Complex);
+    }
+
+    #[test]
+    fn test_small_html_is_simple() {
+        let router = ModelRouter::default();
+        assert!(!router.is_large_creation("做一个hello world的html"));
+        assert_eq!(router.estimate_complexity("做一个hello world的html", 0), Complexity::Simple);
     }
 
     #[test]

@@ -1,4 +1,9 @@
-/// L5: 版本号自动从 git tag 获取，无需手动同步 Cargo.toml
+/// L5: 版本号从 git tag 获取 + 源文件哈希强制重编译
+///
+/// 问题：仅依赖 git tag 时，tag 不变 → version.rs 不变 → cargo 复用缓存 →
+///       src/api.rs 等修改后二进制不更新（需 cargo clean）
+/// 修复：将 src/ 下所有 .rs 文件的大小+路径哈希嵌入 version.rs，
+///       任何源码变更 → 哈希不同 → cargo 自动重编译所有依赖
 fn main() {
     // 优先从 git tag 读取（永远和发布版本一致）
     let version = std::process::Command::new("git")
@@ -9,15 +14,51 @@ fn main() {
         .map(|s| s.trim().trim_start_matches('v').to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| {
-            // 回退：无 git 时用 Cargo.toml
             std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into())
         });
 
+    // 计算 src/ 下所有 .rs 文件的路径+大小哈希（不读内容，足够检测变更）
+    let src_hash = compute_src_hash();
+
     let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".into());
     let dest = std::path::Path::new(&out_dir).join("version.rs");
-    std::fs::write(&dest, format!("pub const VERSION: &str = \"{}\";\n", version))
-        .expect("failed to write version.rs");
+    std::fs::write(
+        &dest,
+        format!(
+            "pub const VERSION: &str = \"{}\";\npub const SRC_HASH: &str = \"{}\";\n",
+            version, src_hash
+        ),
+    )
+    .expect("failed to write version.rs");
 
-    // L5: 不设 rerun-if-changed，每次 cargo build 都重新检测 git tag
-    // git describe 极其轻量（<1ms），不会影响构建速度
+    // 不设 rerun-if-changed：git describe 极其轻量，每次构建都重新检测
+}
+
+/// 遍历 src/ 目录，收集所有 .rs 文件的路径和大小，计算确定性哈希
+fn compute_src_hash() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut entries: Vec<(String, u64)> = Vec::new();
+    collect_rs_files(std::path::Path::new("src"), &mut entries);
+    // 按路径排序保证确定性
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, size) in &entries {
+        path.hash(&mut hasher);
+        size.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+fn collect_rs_files(dir: &std::path::Path, entries: &mut Vec<(String, u64)>) {
+    if let Ok(iter) = std::fs::read_dir(dir) {
+        for entry in iter.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, entries);
+            } else if path.extension().map_or(false, |e| e == "rs") {
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                entries.push((path.to_string_lossy().to_string(), size));
+            }
+        }
+    }
 }

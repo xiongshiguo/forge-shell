@@ -366,56 +366,46 @@ fn validate_messages(mut msgs: Vec<ChatMessage>, _thinking_enabled: bool) -> Vec
     // DeepSeek API 要求有 tool_calls 时必须回传；无 tool_calls 时空串无害
     // 由 API 自身决定是否忽略，我们不替它判断
 
-    // L4: tool_call_id 全局去重——多轮对话中历史消息携带的旧 ID 可能与新 API 响应冲突
-    // 策略: 扫描所有消息，发现重复 ID 时自动改写为唯一后缀，保证双向匹配
+    // L4: tool_call_id 全局重编号——消灭所有重复，保证 assistant↔tool 配对
+    // 策略: 遍历 conversation，找到所有 assistant+tool_calls → tool_result 配对
+    //       给每个配对分配全局唯一的序号 (call_1, call_2, ...)
     {
-        use std::collections::HashMap;
-        let mut id_map: HashMap<String, String> = HashMap::new(); // old_id → new_id
-        let mut seen: HashMap<String, usize> = HashMap::new();    // id → count
-        let mut counter: usize = 0;
-
-        // 第一遍: 统计重复
-        for m in &msgs {
-            if m.role == "tool" {
-                if let Some(ref id) = m.tool_call_id {
-                    *seen.entry(id.clone()).or_insert(0) += 1;
-                }
-            }
-            if let Some(ref tc) = m.tool_calls {
-                for t in tc {
-                    if let Some(ref id) = t.id {
-                        *seen.entry(id.clone()).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-
-        // 第二遍: 为重复 ID 生成新 ID（仅当同一 ID 出现 > 1 次）
-        for (id, count) in &seen {
-            if *count > 1 {
-                counter += 1;
-                id_map.insert(id.clone(), format!("{}_r{}", id, counter));
-            }
-        }
-
-        // 第三遍: 改写所有消息中的重复 ID
-        if !id_map.is_empty() {
-            for m in &mut msgs {
-                if m.role == "tool" {
-                    if let Some(ref id) = m.tool_call_id {
-                        if let Some(new_id) = id_map.get(id) {
-                            m.tool_call_id = Some(new_id.clone());
-                        }
-                    }
-                }
-                if let Some(ref mut tc) = m.tool_calls {
-                    for t in tc.iter_mut() {
+        // 第一步: 收集所有 (old_id, assistant_index) 配对
+        let mut pairs: Vec<(String, usize)> = Vec::new();
+        for (i, m) in msgs.iter().enumerate() {
+            if m.role == "assistant" {
+                if let Some(ref tc) = m.tool_calls {
+                    for t in tc {
                         if let Some(ref id) = t.id {
-                            if let Some(new_id) = id_map.get(id) {
-                                t.id = Some(new_id.clone());
+                            if !id.is_empty() {
+                                pairs.push((id.clone(), i));
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // 第二步: 分配新 ID (call_1, call_2, ...)，同步改写 assistant 和 tool
+        for (idx, (old_id, assistant_idx)) in pairs.iter().enumerate() {
+            let new_id = format!("call_{}", idx + 1);
+
+            // 改写 assistant.tool_calls[].id
+            if let Some(ref mut tc) = msgs[*assistant_idx].tool_calls {
+                for t in tc.iter_mut() {
+                    if t.id.as_deref() == Some(old_id) {
+                        t.id = Some(new_id.clone());
+                    }
+                }
+            }
+
+            // 改写对应 tool_result.tool_call_id
+            // 找到 assistant 之后、下一个 assistant 之前、tool_call_id 匹配的 tool 消息
+            for m in msgs.iter_mut().skip(*assistant_idx + 1) {
+                if m.role == "assistant" { break; }
+                if m.role == "tool" && m.tool_call_id.as_deref() == Some(old_id) {
+                    m.tool_call_id = Some(new_id.clone());
+                    break; // 每个 tool_call_id 只匹配一个 tool 消息
                 }
             }
         }

@@ -2380,14 +2380,16 @@ pub async fn chat_handler(
             let mut pro_config = config.clone();
             let mut retry_count = 0u32;
             let max_retries = 1u32;
-            let mut last_error = String::new();
+            let mut generated: Option<String> = None;
+            let mut fallback_to_normal = false; // 三阶段失败→回退到正常chat流程
 
-            let generated = loop {
+            loop {
+                if fallback_to_normal { break; }
                 let conv = gen_conv.clone(); // 每次重试用干净上下文
                 let cfg = pro_config.clone();
                 let gen_result: Result<String, String> = async {
                     let mut client = crate::engine::inference::InferenceClient::new(&cfg)
-                        .map_err(|e| format!("Pro客户端: {}", e))?
+                        .map_err(|e| format!("NETWORK:Pro客户端: {}", e))?
                         .with_max_tokens(32768u32)
                         .with_thinking(true)
                         .with_tools(Vec::new());
@@ -2409,9 +2411,8 @@ pub async fn chat_handler(
                 }.await;
 
                 match gen_result {
-                    Ok(content) => break content,
+                    Ok(content) => { generated = Some(content); break; }
                     Err(e) => {
-                        last_error = e.clone();
                         let is_network = e.starts_with("NETWORK:");
                         let is_timeout = e.starts_with("TIMEOUT:");
                         let is_empty = e.starts_with("EMPTY:");
@@ -2426,29 +2427,34 @@ pub async fn chat_handler(
                             continue;
                         }
 
+                        // 所有重试耗尽或空响应 → 回退到正常chat流程（Flash + 工具）
+                        fallback_to_normal = true;
                         if is_empty {
-                            // 空响应 → 降级Flash直接生成（跳过三阶段，用现有工具循环）
                             let _ = tx.send(Ok(Event::default().data(
                                 serde_json::json!({"type": "chunk", "content": "⚠️ Pro无响应，降级Flash直接生成…\n"}).to_string()
                             )));
-                            // 退出三阶段，走下方正常chat流程
                         } else {
                             let _ = tx.send(Ok(Event::default().data(
-                                serde_json::json!({"type": "error", "message": format!("生成失败: {}", e)}).to_string()
+                                serde_json::json!({"type": "error", "message": format!("生成失败: {}，回退Flash生成", e)}).to_string()
                             )));
                         }
-                        return; // 所有重试耗尽或空响应，退出三阶段
+                        break; // 退出重试循环，走下方正常chat流程
                     }
                 }
             };
 
+            // 三阶段失败 → 回退到正常chat流程（Flash + 工具）
+            if fallback_to_normal || generated.is_none() {
+                // 不写任何额外代码，让后续的 normal flow 处理用户请求
+            } else {
+            let generated = generated.unwrap();
             // Phase 2: 后端语法校验——检测致命错误
             let (filename, file_content) = if let Some((first, rest)) = generated.split_once('\n') {
                 let fname = first.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '#' || c == ' ');
                 (if fname.is_empty() { "output.html" } else { fname }.to_string(), rest.to_string())
             } else {
                 ("output.html".to_string(), generated.clone())
-            };
+            }; // generated is already unwrapped above
             let is_html = filename.ends_with(".html") || filename.ends_with(".htm");
             let validation_errors = if is_html { validate_html_syntax(&file_content) } else { Vec::new() };
 
@@ -2509,6 +2515,7 @@ pub async fn chat_handler(
             let work_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             do_write_file(&tx, &state_clone, &req.message, &filename, &final_content, work_dir);
             return;
+            } // else 块结束
         }
         // UCB1 提示词优化器：运行时选择最优变体
         let system_variant = match tokio::time::timeout(std::time::Duration::from_secs(5), state_clone.prompt_optimizer.lock()).await {
